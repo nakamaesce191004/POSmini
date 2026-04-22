@@ -1,0 +1,72 @@
+﻿Analyzing kasirr...                                             
+
+warning - Unnecessary cast - lib\database\transaksi_repository.dart:179:19 - unnecessary_cast
+warning - Unnecessary cast - lib\database\transaksi_repository.dart:180:29 - unnecessary_cast
+   info - The import of 'package:sqflite/sqflite.dart' is unnecessary because all of the used elements are also provided by the import of 'package:sqflite_common_ffi/sqflite_ffi.dart' - lib\main.dart:6:8 - unnecessary_import
+warning - Unused import: 'tambah_metode_pembayaran_screen.dart' - lib\screens\aksi_screen.dart:4:8 - unused_import
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\data_manajemen_screen.dart:404:26 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\data_manajemen_screen.dart:409:41 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\data_manajemen_screen.dart:419:32 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\screens\kalkulator_hpp_screen.dart:204:19 - deprecated_member_use
+   info - Unnecessary braces in a string interpolation - lib\screens\kalkulator_hpp_screen.dart:262:45 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\screens\kalkulator_hpp_screen.dart:266:22 - unnecessary_brace_in_string_interps
+   info - 'activeColor' is deprecated and shouldn't be used. Use activeThumbColor instead. This feature was deprecated after v3.31.0-2.0.pre - lib\screens\metode_pembayaran_screen.dart:168:17 - deprecated_member_use
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\screens\metode_pembayaran_screen.dart:203:56 - use_build_context_synchronously
+warning - Unused import: '../models/produk_model.dart' - lib\screens\pembayaran_screen.dart:6:8 - unused_import
+warning - Unused import: 'printer_settings_screen.dart' - lib\screens\pembayaran_screen.dart:11:8 - unused_import
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\screens\pembayaran_screen.dart:452:42 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\screens\pembayaran_screen.dart:456:42 - use_build_context_synchronously
+   info - The import of 'package:flutter/foundation.dart' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart' - lib\screens\presensi_screen.dart:2:8 - unnecessary_import
+   info - Don't use 'BuildContext's across async gaps - lib\screens\presensi_screen.dart:62:28 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\screens\presensi_screen.dart:379:27 - use_build_context_synchronously
+   info - Use interpolation to compose strings and values - lib\screens\printer_settings_screen.dart:33:22 - prefer_interpolation_to_compose_strings
+   info - Empty catch block - lib\screens\printer_settings_screen.dart:95:23 - empty_catches
+   info - Don't use 'BuildContext's across async gaps - lib\screens\printer_settings_screen.dart:142:26 - use_build_context_synchronously
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\printer_settings_screen.dart:304:41 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\printer_settings_screen.dart:407:74 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\printer_settings_screen.dart:407:104 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\printer_settings_screen.dart:460:29 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\printer_settings_screen.dart:481:41 - deprecated_member_use
+   info - 'activeColor' is deprecated and shouldn't be used. Use activeThumbColor instead. This feature was deprecated after v3.31.0-2.0.pre - lib\screens\printer_settings_screen.dart:506:13 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\printer_settings_screen.dart:520:41 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\riwayat_presensi_screen.dart:127:45 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\tren_screen.dart:109:39 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\tren_screen.dart:249:33 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\tren_screen.dart:261:29 - deprecated_member_use
+warning - Unused import: 'dart:typed_data' - lib\screens\uang_screen.dart:10:8 - unused_import
+warning - Unused import: 'dart:io' - lib\screens\uang_screen.dart:11:8 - unused_import
+warning - Unused import: 'package:file_picker/file_picker.dart' - lib\screens\uang_screen.dart:12:8 - unused_import
+warning - The value of the field '_allProduk' isn't used - lib\screens\uang_screen.dart:29:16 - unused_field
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\screens\uang_screen.dart:204:48 - use_build_context_synchronously
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\uang_screen.dart:374:38 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\uang_screen.dart:387:67 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\uang_screen.dart:412:60 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\uang_screen.dart:442:60 - deprecated_member_use
+   info - Unnecessary use of 'toList' in a spread - lib\screens\uang_screen.dart:591:28 - unnecessary_to_list_in_spreads
+   info - Unnecessary use of 'toList' in a spread - lib\screens\uang_screen.dart:712:20 - unnecessary_to_list_in_spreads
+   info - Empty catch block - lib\services\printer_service.dart:166:21 - empty_catches
+   info - Empty catch block - lib\services\printer_service.dart:199:17 - empty_catches
+warning - The value of the local variable 'targetPrinter' isn't used - lib\services\printer_service.dart:369:16 - unused_local_variable
+   info - Empty catch block - lib\services\printer_service.dart:374:21 - empty_catches
+   info - Don't invoke 'print' in production code - scratch\export_products.dart:11:5 - avoid_print
+   info - Don't invoke 'print' in production code - scratch\export_products.dart:16:3 - avoid_print
+   info - Don't invoke 'print' in production code - scratch\export_products.dart:22:7 - avoid_print
+   info - Don't invoke 'print' in production code - scratch\export_products.dart:33:5 - avoid_print
+   info - Don't invoke 'print' in production code - scratch\export_products.dart:36:5 - avoid_print
+   info - Don't invoke 'print' in production code - scratch\export_products.dart:37:5 - avoid_print
+   info - Don't invoke 'print' in production code - scratch\export_products.dart:39:5 - avoid_print
+   info - Don't invoke 'print' in production code - scratch\find_db.dart:8:3 - avoid_print
+   info - Don't invoke 'print' in production code - scratch\find_db.dart:12:5 - avoid_print
+   info - Don't invoke 'print' in production code - scratch\find_db.dart:14:5 - avoid_print
+   info - Don't invoke 'print' in production code - scratch\find_db.dart:17:8 - avoid_print
+  error - Target of URI doesn't exist: 'lib/database/produk_repository.dart' - scratch\verify_db.dart:2:8 - uri_does_not_exist
+  error - Target of URI doesn't exist: 'lib/database/transaksi_repository.dart' - scratch\verify_db.dart:3:8 - uri_does_not_exist
+   info - Don't invoke 'print' in production code - scratch\verify_db.dart:8:3 - avoid_print
+  error - The function 'ProdukRepository' isn't defined - scratch\verify_db.dart:10:22 - undefined_function
+   info - Don't invoke 'print' in production code - scratch\verify_db.dart:12:3 - avoid_print
+   info - Don't invoke 'print' in production code - scratch\verify_db.dart:14:5 - avoid_print
+  error - The function 'TransaksiRepository' isn't defined - scratch\verify_db.dart:17:25 - undefined_function
+   info - Don't invoke 'print' in production code - scratch\verify_db.dart:19:3 - avoid_print
+   info - Don't invoke 'print' in production code - scratch\verify_db.dart:21:5 - avoid_print
+   info - Don't invoke 'print' in production code - scratch\verify_db.dart:24:3 - avoid_print
+

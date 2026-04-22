@@ -1,0 +1,30 @@
+﻿Analyzing kasirr...                                             
+
+warning - Unused import: 'tambah_metode_pembayaran_screen.dart' - lib\screens\aksi_screen.dart:4:8 - unused_import
+warning - The declaration '_kembalian' isn't referenced - lib\screens\pembayaran_screen.dart:25:11 - unused_element
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\pembayaran_screen.dart:181:39 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\struk_screen.dart:46:61 - deprecated_member_use
+   info - Unnecessary use of string interpolation - lib\screens\tren_screen.dart:166:15 - unnecessary_string_interpolations
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\tren_screen.dart:265:32 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\uang_screen.dart:323:38 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\uang_screen.dart:336:67 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\uang_screen.dart:361:60 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\screens\uang_screen.dart:391:60 - deprecated_member_use
+
+flutter : 10 issues fo
+und. (ran in 1.5s)
+At line:1 char:1
++ flutter analyze > an
+alysis_output.txt 2>&1
++ ~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo    
+          : NotSpecifi
+ed: (10 issu    es fou
+nd. (ran in 1.5s):    
+String) [], RemoteExce
+pt    ion
+    + FullyQualifiedEr
+rorId     : NativeComm
+andError
+ 
