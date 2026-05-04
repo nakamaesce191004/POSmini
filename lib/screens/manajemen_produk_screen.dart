@@ -216,21 +216,7 @@ class _ManajemenProdukScreenState extends State<ManajemenProdukScreen> {
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: produk.stok < 10 ? Colors.red[50] : Colors.green[50],
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                'Stok: ${produk.stok}',
-                                style: TextStyle(
-                                  color: produk.stok < 10 ? Colors.red[700] : Colors.green[700],
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
+                            const SizedBox(height: 16),
                             const SizedBox(height: 4),
                             Row(
                               mainAxisSize: MainAxisSize.min,

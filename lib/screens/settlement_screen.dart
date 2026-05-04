@@ -3,18 +3,25 @@ import 'package:flutter/material.dart';
 
 import '../database/transaksi_repository.dart';
 import '../models/transaksi_model.dart';
+import '../database/produk_repository.dart';
+import '../services/printer_service.dart';
 import '../utils/formatters.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
-class TrenScreen extends StatefulWidget {
-  const TrenScreen({super.key});
+class SettlementScreen extends StatefulWidget {
+  const SettlementScreen({super.key});
 
   @override
-  State<TrenScreen> createState() => _TrenScreenState();
+  State<SettlementScreen> createState() => _SettlementScreenState();
 }
 
-class _TrenScreenState extends State<TrenScreen> {
+class _SettlementScreenState extends State<SettlementScreen> {
   final TransaksiRepository _transaksiRepo = TransaksiRepository();
 
+  String _selectedFilter = 'Semua'; // 'Hari Ini', 'Bulan Ini', 'Pilih Tanggal', 'Semua'
+  DateTimeRange? _customDateRange;
   DashboardSummary? _summary;
   List<DashboardTrendPoint> _trend = [];
   List<Transaksi> _allTransaksi = [];
@@ -28,9 +35,33 @@ class _TrenScreenState extends State<TrenScreen> {
 
   Future<void> _loadDashboard() async {
     setState(() => _isLoading = true);
-    final summary = await _transaksiRepo.getDashboardSummary();
-    final trend = await _transaksiRepo.getDashboardTrend(days: 7);
-    final history = await _transaksiRepo.getAll();
+    
+    String? startIso;
+    String? endIso;
+    int trendDays = 7;
+
+    final now = DateTime.now();
+    if (_selectedFilter == 'Hari Ini') {
+      final start = DateTime(now.year, now.month, now.day);
+      final end = start.add(const Duration(days: 1)).subtract(const Duration(milliseconds: 1));
+      startIso = start.toIso8601String();
+      endIso = end.toIso8601String();
+      trendDays = 1;
+    } else if (_selectedFilter == 'Bulan Ini') {
+      final start = DateTime(now.year, now.month, 1);
+      final end = DateTime(now.year, now.month + 1, 1).subtract(const Duration(milliseconds: 1));
+      startIso = start.toIso8601String();
+      endIso = end.toIso8601String();
+      trendDays = 30;
+    } else if (_selectedFilter == 'Pilih Tanggal' && _customDateRange != null) {
+      startIso = _customDateRange!.start.toIso8601String();
+      endIso = _customDateRange!.end.add(const Duration(days: 1)).subtract(const Duration(milliseconds: 1)).toIso8601String();
+      trendDays = _customDateRange!.duration.inDays + 1;
+    }
+
+    final summary = await _transaksiRepo.getDashboardSummary(startDate: startIso, endDate: endIso);
+    final trend = await _transaksiRepo.getDashboardTrend(days: trendDays, customStartDate: startIso);
+    final history = await _transaksiRepo.getAll(limit: 100, startDate: startIso, endDate: endIso);
 
     if (!mounted) return;
     setState(() {
@@ -39,6 +70,22 @@ class _TrenScreenState extends State<TrenScreen> {
       _allTransaksi = history;
       _isLoading = false;
     });
+  }
+
+  void _pilihTanggalCustom() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+      initialDateRange: _customDateRange,
+    );
+    if (picked != null) {
+      setState(() {
+        _selectedFilter = 'Pilih Tanggal';
+        _customDateRange = picked;
+      });
+      _loadDashboard();
+    }
   }
 
   @override
@@ -55,10 +102,15 @@ class _TrenScreenState extends State<TrenScreen> {
       backgroundColor: const Color(0xFFF5F7FB),
       appBar: AppBar(
         title: const Text(
-          'Dashboard',
+          'Settlement',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
         actions: [
+          IconButton(
+            onPressed: _cetakStrukSettlement,
+            icon: const Icon(Icons.print_outlined, color: Colors.blue),
+            tooltip: 'Cetak Struk Settlement',
+          ),
           IconButton(
             onPressed: _loadDashboard,
             icon: const Icon(Icons.refresh),
@@ -71,13 +123,14 @@ class _TrenScreenState extends State<TrenScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            _buildFilterSection(),
+            const SizedBox(height: 16),
             _buildHeroCard(summary),
             const SizedBox(height: 16),
             _buildSummaryGrid(summary),
             const SizedBox(height: 20),
             _buildChartCard(),
-            const SizedBox(height: 20),
-            _buildInsightCard(summary),
+
             const SizedBox(height: 32),
             _buildHistorySection(),
             const SizedBox(height: 100), // Extra space for scrolling
@@ -161,9 +214,21 @@ class _TrenScreenState extends State<TrenScreen> {
           trx.pelanggan.isEmpty ? 'Umum' : trx.pelanggan,
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
-        subtitle: Text(
-          '$dateStr • $timeStr • ${trx.metode}',
-          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '$dateStr • $timeStr • ${trx.metode}',
+              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+            ),
+            if (trx.deskripsi.isNotEmpty)
+              Text(
+                trx.deskripsi,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, color: Colors.grey[800], fontStyle: FontStyle.italic),
+              ),
+          ],
         ),
         trailing: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -177,7 +242,25 @@ class _TrenScreenState extends State<TrenScreen> {
                 color: isPemasukan ? Colors.green[700] : Colors.red[700],
               ),
             ),
-            const Icon(Icons.chevron_right, size: 16, color: Colors.grey),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (trx.isPrinted)
+                  Container(
+                    margin: const EdgeInsets.only(right: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text(
+                      'Sudah Dicetak',
+                      style: TextStyle(fontSize: 8, color: Colors.blue, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                const Icon(Icons.chevron_right, size: 16, color: Colors.grey),
+              ],
+            ),
           ],
         ),
       ),
@@ -221,13 +304,20 @@ class _TrenScreenState extends State<TrenScreen> {
                     const SizedBox(height: 24),
                     _detailRow('ID Transaksi', trx.id ?? '-'),
                     _detailRow('Waktu', trx.tanggal.toString().substring(0, 19)),
-                    _detailRow('Pelanggan', trx.pelanggan.isEmpty ? 'Umum' : trx.pelanggan),
+                    _detailRow(trx.jenis == 'pengeluaran' ? 'Supplier' : 'Pelanggan', trx.pelanggan.isEmpty ? 'Umum' : trx.pelanggan),
                     if (trx.noMeja != null && trx.noMeja!.isNotEmpty) _detailRow('Meja/Kursi', trx.noMeja!),
                     _detailRow('Metode', trx.metode),
                     _detailRow('Jenis', trx.jenis.toUpperCase()),
+                    if (trx.deskripsi.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      const Text('Keterangan:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey)),
+                      Text(trx.deskripsi, style: const TextStyle(fontSize: 15)),
+                    ],
                     const Divider(height: 48),
-                    const Text('Daftar Produk', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                    const SizedBox(height: 12),
+                    if (trx.items.isNotEmpty) ...[
+                      const Text('Daftar Produk', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      const SizedBox(height: 12),
+                    ],
                     ...trx.items.map((item) => Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       child: Row(
@@ -259,6 +349,22 @@ class _TrenScreenState extends State<TrenScreen> {
                       ],
                     ),
                     const SizedBox(height: 48),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 56,
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.print_outlined),
+                        label: const Text('Cetak Struk Transaksi'),
+                        onPressed: () => _printStruk(trx),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
                       height: 56,
@@ -965,84 +1071,7 @@ class _TrenScreenState extends State<TrenScreen> {
     );
   }
 
-  Widget _buildInsightCard(DashboardSummary summary) {
-    final avgPenjualan = _trend.isEmpty
-        ? 0
-        : (summary.totalPenjualan / _trend.length).round();
-    final avgProduk = _trend.isEmpty
-        ? 0
-        : (summary.totalProdukTerjual / _trend.length).round();
 
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFE6EBF4)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Ringkasan Query',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            'Rata-rata 7 hari: penjualan Rp ${formatRupiah(avgPenjualan)} per hari dan ${formatRupiah(avgProduk)} item terjual per hari.',
-            style: TextStyle(
-              color: Colors.grey[700],
-              height: 1.5,
-            ),
-          ),
-          const SizedBox(height: 16),
-          _buildSqlPreview(
-            'HPP',
-            'SELECT SUM(ti.qty * p.harga_beli) '
-                'FROM transaksi_items ti '
-                'JOIN transaksi t ON ti.transaksi_id = t.id '
-                'JOIN produk p ON ti.produk_id = p.id '
-                'WHERE t.jenis = "pemasukan";',
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSqlPreview(String title, String query) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF101828),
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            query,
-            style: const TextStyle(
-              color: Color(0xFFD1E0FF),
-              fontFamily: 'monospace',
-              height: 1.5,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   double _chartMaxY() {
     var maxValue = 0;
@@ -1068,7 +1097,311 @@ class _TrenScreenState extends State<TrenScreen> {
     }
     return value.toStringAsFixed(0);
   }
+
+  Future<void> _printStruk(Transaksi trx) async {
+    if (trx.isPrinted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Struk ini sudah pernah dicetak sebelumnya!'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    final pdf = await PrinterService().generateReceiptPdf(trx, PrinterService().storeName);
+    _showPreviewDialog(pdf, 'Struk_${trx.id}', trx.id);
+  }
+
+  void _showPreviewDialog(pw.Document pdf, String fileName, [String? trxId]) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: Container(
+          width: 450,
+          height: MediaQuery.of(context).size.height * 0.8,
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Pratinjau Struk',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                    style: IconButton.styleFrom(backgroundColor: Colors.grey[100]),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50],
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey[200]!),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: PdfPreview(
+                    build: (format) => pdf.save(),
+                    allowPrinting: true,
+                    allowSharing: true,
+                    canChangePageFormat: false,
+                    canChangeOrientation: false,
+                    canDebug: false,
+                    initialPageFormat: const PdfPageFormat(58 * PdfPageFormat.mm, double.infinity),
+                    pdfFileName: '$fileName.pdf',
+                    actions: [
+                      PdfPreviewAction(
+                        icon: const Icon(Icons.print),
+                        onPressed: (context, build, format) async {
+                          final ok = await PrinterService().printPdfDocument(pdf, fileName);
+                          if (ok && trxId != null) {
+                            await TransaksiRepository().updatePrintedStatus(trxId, true);
+                            _loadDashboard(); // Refresh list to update icons/status
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    final ok = await PrinterService().printPdfDocument(pdf, fileName);
+                    if (ok) {
+                      if (trxId != null) {
+                        await TransaksiRepository().updatePrintedStatus(trxId, true);
+                        _loadDashboard();
+                      }
+                      if (context.mounted) Navigator.pop(context);
+                      
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Struk berhasil dicetak'), backgroundColor: Colors.green),
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.print),
+                  label: const Text('Cetak Sekarang'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  pw.Widget _receiptRow(String label, String value) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 0.5),
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        children: [
+          pw.Text(label, style: const pw.TextStyle(fontSize: 7)),
+          pw.Text(value, style: const pw.TextStyle(fontSize: 7)),
+        ],
+      ),
+    );
+  }
+  Widget _buildFilterSection() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _buildFilterChip('Semua'),
+          const SizedBox(width: 8),
+          _buildFilterChip('Hari Ini'),
+          const SizedBox(width: 8),
+          _buildFilterChip('Bulan Ini'),
+          const SizedBox(width: 8),
+          _buildFilterChip('Pilih Tanggal', isCalendar: true),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterChip(String label, {bool isCalendar = false}) {
+    final isSelected = _selectedFilter == label;
+    return GestureDetector(
+      onTap: isCalendar ? _pilihTanggalCustom : () {
+        setState(() => _selectedFilter = label);
+        _loadDashboard();
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF173B6D) : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: isSelected ? const Color(0xFF173B6D) : const Color(0xFFE6EBF4)),
+        ),
+        child: Row(
+          children: [
+            if (isCalendar) ...[
+              Icon(Icons.calendar_today, size: 14, color: isSelected ? Colors.white : Colors.grey),
+              const SizedBox(width: 6),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? Colors.white : Colors.black87,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _cetakStrukSettlement() async {
+    final pdf = await _generateSettlementPdf();
+    _showPreviewDialog(pdf, 'Settlement_Report_${DateTime.now().millisecondsSinceEpoch}');
+  }
+
+  Future<pw.Document> _generateSettlementPdf() async {
+    final produkRepo = ProdukRepository();
+    final allProducts = await produkRepo.getAll();
+    final Map<String, String> productCategoryMap = {};
+    for (var p in allProducts) {
+      if (p.id != null) productCategoryMap[p.id!] = p.kategori;
+    }
+
+    final Map<String, int> orderTypeSummary = {'Dine In': 0, 'Take Away / Umum': 0};
+    final Map<String, int> paymentMethodSummary = {};
+    final Map<String, Map<String, int>> categorySales = {};
+
+    for (final trx in _allTransaksi) {
+      if (trx.jenis == 'pemasukan') {
+        // Summary Order Type
+        if (trx.noMeja != null && trx.noMeja!.isNotEmpty) {
+          orderTypeSummary['Dine In'] = orderTypeSummary['Dine In']! + 1;
+        } else {
+          orderTypeSummary['Take Away / Umum'] = orderTypeSummary['Take Away / Umum']! + 1;
+        }
+
+        // Summary Payment Method
+        paymentMethodSummary.update(trx.metode, (val) => val + trx.nominal, ifAbsent: () => trx.nominal);
+
+        for (final item in trx.items) {
+          final cat = productCategoryMap[item.produkId] ?? 'Lainnya';
+          final prodName = item.namaProduk ?? 'Produk';
+          
+          categorySales.putIfAbsent(cat, () => {});
+          categorySales[cat]!.update(prodName, (val) => val + item.qty, ifAbsent: () => item.qty);
+        }
+      }
+    }
+
+    final pdf = pw.Document();
+    final summary = _summary!;
+    
+    pdf.addPage(
+      pw.Page(
+        pageFormat: const PdfPageFormat(58 * PdfPageFormat.mm, double.infinity, marginAll: 2 * PdfPageFormat.mm),
+        build: (pw.Context context) {
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.center,
+            children: [
+              pw.Text('SETTLEMENT REPORT', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
+              pw.SizedBox(height: 2),
+              pw.Text('Kasir Pintar POS', style: const pw.TextStyle(fontSize: 8)),
+              pw.SizedBox(height: 4),
+              pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
+              pw.SizedBox(height: 4),
+              
+              _receiptRow('Periode', _selectedFilter),
+              _receiptRow('Tgl Cetak', DateTime.now().toString().substring(0, 16)),
+              
+              pw.SizedBox(height: 4),
+              pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
+              pw.SizedBox(height: 4),
+              
+              pw.Text('RINGKASAN KEUANGAN', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8)),
+              pw.SizedBox(height: 4),
+              _receiptRow('Penjualan', 'Rp ${formatRupiah(summary.totalPenjualan)}'),
+              _receiptRow('HPP', 'Rp ${formatRupiah(summary.totalHpp)}'),
+              _receiptRow('Laba', 'Rp ${formatRupiah(summary.laba)}'),
+              
+              pw.SizedBox(height: 4),
+              pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
+              pw.SizedBox(height: 4),
+              
+              pw.Text('JENIS PEMESANAN', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8)),
+              pw.SizedBox(height: 4),
+              _receiptRow('Dine In', '${orderTypeSummary['Dine In']} Transaksi'),
+              _receiptRow('Take Away', '${orderTypeSummary['Take Away / Umum']} Transaksi'),
+              
+              pw.SizedBox(height: 4),
+              pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
+              pw.SizedBox(height: 4),
+
+              pw.Text('METODE PEMBAYARAN', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8)),
+              pw.SizedBox(height: 4),
+              ...paymentMethodSummary.entries.map((e) => _receiptRow(e.key, 'Rp ${formatRupiah(e.value)}')).toList(),
+
+              pw.SizedBox(height: 4),
+              pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
+              pw.SizedBox(height: 4),
+              
+              pw.Text('DETAIL PENJUALAN PRODUK', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8)),
+              pw.SizedBox(height: 4),
+              
+              ...categorySales.entries.map((catEntry) {
+                final catName = catEntry.key;
+                final productsMap = catEntry.value;
+                
+                return pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text('Kategori: $catName', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8)),
+                    pw.SizedBox(height: 2),
+                    ...productsMap.entries.map((prodEntry) {
+                      return pw.Row(
+                        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                        children: [
+                          pw.Text('- ${prodEntry.key}', style: const pw.TextStyle(fontSize: 7)),
+                          pw.Text('${prodEntry.value} terjual', style: const pw.TextStyle(fontSize: 7)),
+                        ],
+                      );
+                    }).toList(),
+                    pw.SizedBox(height: 4),
+                  ]
+                );
+              }).toList(),
+              
+              if (categorySales.isEmpty)
+                pw.Text('Tidak ada data penjualan.', style: pw.TextStyle(fontSize: 7, fontStyle: pw.FontStyle.italic)),
+              
+              pw.SizedBox(height: 4),
+              pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
+              pw.SizedBox(height: 8),
+              pw.Text('Terima Kasih', style: pw.TextStyle(fontSize: 8, fontStyle: pw.FontStyle.italic)),
+            ],
+          );
+        },
+      ),
+    );
+    return pdf;
+  }
 }
+
 
 class _ChartLegend extends StatelessWidget {
   final Color color;

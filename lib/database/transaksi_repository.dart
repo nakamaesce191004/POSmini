@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../models/transaksi_model.dart';
 import 'db_helper.dart';
+import 'resep_repository.dart'; // Tambahkan ini
 
 class DashboardSummary {
   final int totalPenjualan;
@@ -49,28 +50,64 @@ class TransaksiRepository {
           'qty': item.qty,
           'harga_saat_ini': item.hargaSaatIni,
         });
+
+        // POTONG STOK BAHAN BAKU JIKA STATUS SELESAI
+        if (transaksi.status == 'Selesai') {
+          await ResepRepository().kurangiStokBahanBaku(item.produkId, item.qty, executor: txn);
+        }
       }
       return id;
     });
   }
 
-  Future<List<Transaksi>> getAll() async {
+  Future<List<Transaksi>> getAll({int limit = 50, String? startDate, String? endDate}) async {
     final db = await _dbHelper.database;
-    final List<Map<String, dynamic>> maps = await db.query('transaksi', orderBy: 'tanggal DESC');
     
-    List<Transaksi> transaksis = [];
-    for (var map in maps) {
-      final List<Map<String, dynamic>> itemMaps = await db.rawQuery('''
-        SELECT ti.*, p.nama
-        FROM transaksi_items ti
-        LEFT JOIN produk p ON ti.produk_id = p.id
-        WHERE ti.transaksi_id = ?
-      ''', [map['id']]);
-      
-      List<TransaksiItem> items = itemMaps.map((i) => TransaksiItem.fromMap(i)).toList();
-      transaksis.add(Transaksi.fromMap(map, items));
+    String whereClause = "";
+    List<String> whereArgs = [];
+    
+    if (startDate != null && endDate != null) {
+      whereClause = "WHERE tanggal >= ? AND tanggal <= ?";
+      whereArgs = [startDate, endDate];
+    } else if (startDate != null) {
+      whereClause = "WHERE tanggal >= ?";
+      whereArgs = [startDate];
     }
-    return transaksis;
+
+    // 1. Ambil header transaksi
+    final List<Map<String, dynamic>> maps = await db.query(
+      'transaksi', 
+      where: whereClause.isEmpty ? null : whereClause.replaceFirst("WHERE ", ""),
+      whereArgs: whereArgs.isEmpty ? null : whereArgs,
+      orderBy: 'tanggal DESC',
+      limit: limit,
+    );
+    
+    if (maps.isEmpty) return [];
+
+    // 2. Ambil semua item untuk transaksi-transaksi tersebut dalam satu kueri
+    final List<String> ids = maps.map((m) => m['id'].toString()).toList();
+    final String placeholders = ids.map((_) => '?').join(',');
+    
+    final List<Map<String, dynamic>> allItems = await db.rawQuery('''
+      SELECT ti.*, p.nama
+      FROM transaksi_items ti
+      LEFT JOIN produk p ON ti.produk_id = p.id
+      WHERE ti.transaksi_id IN ($placeholders)
+    ''', ids);
+
+    // 3. Kelompokkan item berdasarkan transaksi_id
+    Map<String, List<TransaksiItem>> itemsByTrx = {};
+    for (var itemMap in allItems) {
+      final trxId = itemMap['transaksi_id'].toString();
+      itemsByTrx.putIfAbsent(trxId, () => []).add(TransaksiItem.fromMap(itemMap));
+    }
+    
+    // 4. Gabungkan
+    return maps.map((m) {
+      final trxId = m['id'].toString();
+      return Transaksi.fromMap(m, itemsByTrx[trxId] ?? []);
+    }).toList();
   }
 
   Future<int> update(Transaksi transaksi) async {
@@ -99,6 +136,11 @@ class TransaksiRepository {
           'qty': item.qty,
           'harga_saat_ini': item.hargaSaatIni,
         });
+
+        // POTONG STOK BAHAN BAKU JIKA STATUS BERUBAH JADI SELESAI
+        if (transaksi.status == 'Selesai') {
+          await ResepRepository().kurangiStokBahanBaku(item.produkId, item.qty, executor: txn);
+        }
       }
       return count;
     });
@@ -128,29 +170,38 @@ class TransaksiRepository {
     return 0;
   }
 
-  Future<DashboardSummary> getDashboardSummary() async {
+  Future<DashboardSummary> getDashboardSummary({String? startDate, String? endDate}) async {
     final db = await _dbHelper.database;
+    String dateFilter = "";
+    List<String> args = [];
+    
+    if (startDate != null && endDate != null) {
+      dateFilter = " AND tanggal >= ? AND tanggal <= ?";
+      args = [startDate, endDate];
+    } else if (startDate != null) {
+      dateFilter = " AND tanggal >= ?";
+      args = [startDate];
+    }
+
     final result = await db.rawQuery('''
       SELECT
+        SUM(nominal) AS total_penjualan,
         (
-          SELECT COALESCE(SUM(nominal), 0)
-          FROM transaksi
-          WHERE jenis = 'pemasukan'
-        ) AS total_penjualan,
-        (
-          SELECT COALESCE(SUM(ti.qty * p.harga_beli), 0)
+          SELECT SUM(ti.qty * p.harga_beli)
           FROM transaksi_items ti
-          INNER JOIN transaksi t ON ti.transaksi_id = t.id
-          INNER JOIN produk p ON ti.produk_id = p.id
-          WHERE t.jenis = 'pemasukan'
+          JOIN produk p ON ti.produk_id = p.id
+          JOIN transaksi t ON ti.transaksi_id = t.id
+          WHERE t.jenis = 'pemasukan' $dateFilter
         ) AS total_hpp,
         (
-          SELECT COALESCE(SUM(ti.qty), 0)
+          SELECT SUM(ti.qty)
           FROM transaksi_items ti
-          INNER JOIN transaksi t ON ti.transaksi_id = t.id
-          WHERE t.jenis = 'pemasukan'
+          JOIN transaksi t ON ti.transaksi_id = t.id
+          WHERE t.jenis = 'pemasukan' $dateFilter
         ) AS total_produk_terjual
-    ''');
+      FROM transaksi
+      WHERE jenis = 'pemasukan' $dateFilter
+    ''', [...args, ...args, ...args]);
 
     final row = result.first;
     return DashboardSummary(
@@ -160,9 +211,12 @@ class TransaksiRepository {
     );
   }
 
-  Future<List<DashboardTrendPoint>> getDashboardTrend({int days = 7}) async {
+  Future<List<DashboardTrendPoint>> getDashboardTrend({int days = 7, String? customStartDate}) async {
     final db = await _dbHelper.database;
-    final startDate = DateTime.now().subtract(Duration(days: days - 1));
+    final startDate = customStartDate != null 
+        ? DateTime.parse(customStartDate) 
+        : DateTime.now().subtract(Duration(days: days - 1));
+        
     final startDateIso = DateTime(
       startDate.year,
       startDate.month,
@@ -256,33 +310,50 @@ class TransaksiRepository {
 
   Future<List<Transaksi>> getPendingTransactions() async {
     final db = await _dbHelper.database;
-    final String todayString = DateTime.now().toString().substring(0, 10);
     
     try {
       final List<Map<String, dynamic>> maps = await db.query(
         'transaksi',
-        where: 'status = ? OR status = ?', // Check both cases just in case
+        where: 'status = ? OR status = ?',
         whereArgs: ['Pending', 'pending'],
         orderBy: 'tanggal DESC',
       );
       
-      List<Transaksi> transaksis = [];
-      for (var map in maps) {
-        final List<Map<String, dynamic>> itemMaps = await db.rawQuery('''
-          SELECT ti.*, p.nama
-          FROM transaksi_items ti
-          LEFT JOIN produk p ON ti.produk_id = p.id
-          WHERE ti.transaksi_id = ?
-        ''', [map['id']]);
-        
-        List<TransaksiItem> items = itemMaps.map((m) => TransaksiItem.fromMap(m)).toList();
-        transaksis.add(Transaksi.fromMap(map, items));
+      if (maps.isEmpty) return [];
+
+      final List<String> ids = maps.map((m) => m['id'].toString()).toList();
+      final String placeholders = ids.map((_) => '?').join(',');
+      
+      final List<Map<String, dynamic>> allItems = await db.rawQuery('''
+        SELECT ti.*, p.nama
+        FROM transaksi_items ti
+        LEFT JOIN produk p ON ti.produk_id = p.id
+        WHERE ti.transaksi_id IN ($placeholders)
+      ''', ids);
+
+      Map<String, List<TransaksiItem>> itemsByTrx = {};
+      for (var itemMap in allItems) {
+        final trxId = itemMap['transaksi_id'].toString();
+        itemsByTrx.putIfAbsent(trxId, () => []).add(TransaksiItem.fromMap(itemMap));
       }
-      return transaksis;
+      
+      return maps.map((m) {
+        final trxId = m['id'].toString();
+        return Transaksi.fromMap(m, itemsByTrx[trxId] ?? []);
+      }).toList();
     } catch (e) {
       debugPrint("Gagal mengambil pesanan aktif: $e");
-      // Jika kolom status belum ada di DB lama, mungkin ini penyebabnya.
       return [];
     }
+  }
+
+  Future<int> updatePrintedStatus(String id, bool isPrinted) async {
+    final db = await _dbHelper.database;
+    return await db.update(
+      'transaksi',
+      {'is_printed': isPrinted ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 }

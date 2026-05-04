@@ -373,17 +373,7 @@ class _TambahProdukScreenState extends State<TambahProdukScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Stok Field
-              TextFormField(
-                controller: _stokController,
-                keyboardType: TextInputType.number,
-                decoration: _customInputDecoration(
-                  hint: 'Stok Produk',
-                  prefixIcon: Icons.inventory_2,
-                ),
-                validator: (value) => value!.isEmpty ? 'Wajib diisi' : null,
-              ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 16),
 
               // Simpan Produk Button
               SizedBox(

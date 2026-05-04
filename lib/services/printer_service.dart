@@ -52,7 +52,7 @@ class PrinterService {
       _storeAddress = prefs.getString('store_address') ?? "";
       
       if (_isAndroid && _selectedPrinterId != null) {
-        await connect(_selectedPrinterId!);
+        connect(_selectedPrinterId!); // Don't await connection during init
       }
     } catch (e) {
       _addLog("Service Init Error: $e");
@@ -333,61 +333,66 @@ class PrinterService {
     }
   }
 
-  Future<bool> printReceiptUniversal(Transaksi transaksi, String storeName) async {
-    try {
-      final doc = pw.Document();
-      doc.addPage(
-        pw.Page(
-          pageFormat: PdfPageFormat.roll80,
-          build: (pw.Context context) {
-            return pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [
-                pw.Center(child: pw.Text(storeName, style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold))),
-                pw.SizedBox(height: 10),
-                pw.Text('No. Transaksi: ${transaksi.id}'),
-                pw.Text('Waktu: ${transaksi.tanggal.toString().substring(0, 19)}'),
-                if (transaksi.pelanggan.isNotEmpty) pw.Text('Pelanggan: ${transaksi.pelanggan}'),
-                if (transaksi.noMeja != null && transaksi.noMeja!.isNotEmpty) pw.Text('Meja/Kursi: ${transaksi.noMeja}'),
-                pw.Text('Kasir: Admin'),
-                pw.Divider(),
-                ...transaksi.items.map((item) => pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                  children: [
-                    pw.Text('${item.qty}x ${item.namaProduk}'),
-                    pw.Text(formatRupiah(item.qty * item.hargaSaatIni)),
-                  ],
-                )),
-                pw.Divider(),
-                if (transaksi.diskon > 0)
-                  pw.Row(
-                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                    children: [
-                      pw.Text('Diskon ${transaksi.diskonInfo != null ? "(${transaksi.diskonInfo})" : ""}'),
-                      pw.Text('-${formatRupiah(transaksi.diskon)}'),
-                    ],
-                  ),
-                if (transaksi.pajak > 0)
-                  pw.Row(
-                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                    children: [
-                      pw.Text('Pajak ${transaksi.pajakInfo != null ? "(${transaksi.pajakInfo})" : ""}'),
-                      pw.Text('+${formatRupiah(transaksi.pajak)}'),
-                    ],
-                  ),
-                if (transaksi.diskon > 0 || transaksi.pajak > 0) pw.Divider(),
+  Future<pw.Document> generateReceiptPdf(Transaksi transaksi, String storeName) async {
+    final doc = pw.Document();
+    doc.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.roll80,
+        build: (pw.Context context) {
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Center(child: pw.Text(storeName, style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold))),
+              pw.SizedBox(height: 10),
+              pw.Text('No. Transaksi: ${transaksi.id}'),
+              pw.Text('Waktu: ${transaksi.tanggal.toString().substring(0, 19)}'),
+              if (transaksi.pelanggan.isNotEmpty) pw.Text('Pelanggan: ${transaksi.pelanggan}'),
+              if (transaksi.noMeja != null && transaksi.noMeja!.isNotEmpty) pw.Text('Meja/Kursi: ${transaksi.noMeja}'),
+              pw.Text('Kasir: Admin'),
+              pw.Divider(),
+              ...transaksi.items.map((item) => pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text('${item.qty}x ${item.namaProduk}'),
+                  pw.Text(formatRupiah(item.qty * item.hargaSaatIni)),
+                ],
+              )),
+              pw.Divider(),
+              if (transaksi.diskon > 0)
                 pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
-                    pw.Text('TOTAL', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                    pw.Text('Rp ${formatRupiah(transaksi.nominal)}', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                    pw.Text('Diskon ${transaksi.diskonInfo != null ? "(${transaksi.diskonInfo})" : ""}'),
+                    pw.Text('-${formatRupiah(transaksi.diskon)}'),
                   ],
                 ),
-              ],
-            );
-          },
-        ),
-      );
+              if (transaksi.pajak > 0)
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text('Pajak ${transaksi.pajakInfo != null ? "(${transaksi.pajakInfo})" : ""}'),
+                    pw.Text('+${formatRupiah(transaksi.pajak)}'),
+                  ],
+                ),
+              if (transaksi.diskon > 0 || transaksi.pajak > 0) pw.Divider(),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text('TOTAL', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                  pw.Text('Rp ${formatRupiah(transaksi.nominal)}', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                ],
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    return doc;
+  }
+
+  Future<bool> printReceiptUniversal(Transaksi transaksi, String storeName) async {
+    try {
+      final doc = await generateReceiptPdf(transaksi, storeName);
 
       Printer? targetPrinter;
       if (_selectedPrinterId != null && !kIsWeb) {
@@ -397,12 +402,49 @@ class PrinterService {
         } catch (e) {}
       }
 
-      await Printing.layoutPdf(
-        onLayout: (PdfPageFormat format) => doc.save(),
-        name: 'Struk_${transaksi.id}',
-      );
+      if (targetPrinter != null) {
+        await Printing.directPrintPdf(
+          printer: targetPrinter,
+          onLayout: (PdfPageFormat format) => doc.save(),
+          name: 'Struk_${transaksi.id}',
+        );
+      } else {
+        await Printing.layoutPdf(
+          onLayout: (PdfPageFormat format) => doc.save(),
+          name: 'Struk_${transaksi.id}',
+        );
+      }
       return true;
     } catch (e) {
+      return false;
+    }
+  }
+
+  Future<bool> printPdfDocument(pw.Document doc, String documentName) async {
+    try {
+      Printer? targetPrinter;
+      if (_selectedPrinterId != null && !kIsWeb) {
+        final printers = await Printing.listPrinters();
+        try {
+          targetPrinter = printers.firstWhere((p) => p.url == _selectedPrinterId || p.name == _selectedPrinterName);
+        } catch (e) {}
+      }
+
+      if (targetPrinter != null) {
+        await Printing.directPrintPdf(
+          printer: targetPrinter,
+          onLayout: (PdfPageFormat format) => doc.save(),
+          name: documentName,
+        );
+      } else {
+        await Printing.layoutPdf(
+          onLayout: (PdfPageFormat format) => doc.save(),
+          name: documentName,
+        );
+      }
+      return true;
+    } catch (e) {
+      _addLog("Print PDF Document Error: $e");
       return false;
     }
   }

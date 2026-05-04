@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../database/produk_repository.dart';
+import '../database/resep_repository.dart';
 import '../database/transaksi_repository.dart';
 import '../models/produk_model.dart';
 import '../models/transaksi_model.dart';
@@ -18,7 +19,9 @@ class _KasirScreenState extends State<KasirScreen> {
   String _selectedKategori = 'Semua';
   
   final ProdukRepository _produkRepo = ProdukRepository();
+  final ResepRepository _resepRepo = ResepRepository();
   List<Produk> _allProduk = [];
+  Map<String, int> _estimasiStok = {};
   bool _isLoading = true;
 
   // Format keranjang: { 'id_produk' : jumlah }
@@ -38,9 +41,11 @@ class _KasirScreenState extends State<KasirScreen> {
   Future<void> _loadProduk() async {
     setState(() => _isLoading = true);
     final data = await _produkRepo.getAll();
+    final estimasi = await _resepRepo.getEstimasiStokProduk();
     if (mounted) {
       setState(() {
         _allProduk = data;
+        _estimasiStok = estimasi;
         _isLoading = false;
       });
     }
@@ -85,16 +90,10 @@ class _KasirScreenState extends State<KasirScreen> {
     return total < 0 ? 0 : total;
   }
 
-  void _tambahKeKeranjang(String id, int stok) {
+  void _tambahKeKeranjang(String id) {
     setState(() {
       final currentQty = _cart[id] ?? 0;
-      if (currentQty < stok) {
-        _cart[id] = currentQty + 1;
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Stok tidak mencukupi!'), duration: Duration(seconds: 1)),
-        );
-      }
+      _cart[id] = currentQty + 1;
     });
   }
 
@@ -128,15 +127,7 @@ class _KasirScreenState extends State<KasirScreen> {
 
     if (result == true) {
       // Performa: Gunakan batch update jika produk banyak (opsional, tapi bagus)
-      for (var entry in _cart.entries) {
-        try {
-           final produk = _allProduk.firstWhere((p) => p.id == entry.key);
-           final updatedProduk = produk.copyWith(stok: produk.stok - entry.value);
-           await _produkRepo.update(updatedProduk);
-        } catch (e) {
-           // Ignore
-        }
-      }
+      // Stok produk manual sudah tidak diupdate di sini (sudah otomatis lewat Bahan Baku)
 
       if (mounted) {
         setState(() {
@@ -435,7 +426,7 @@ class _KasirScreenState extends State<KasirScreen> {
     final stok = produk.stok;
     
     return GestureDetector(
-      onTap: stok > 0 ? () => _tambahKeKeranjang(produk.id!, stok) : null,
+      onTap: () => _tambahKeKeranjang(produk.id!),
       child: Card(
         elevation: 0,
         shape: RoundedRectangleBorder(
@@ -449,11 +440,11 @@ class _KasirScreenState extends State<KasirScreen> {
             children: [
               Expanded(
                 child: Container(
-                  color: stok == 0 ? Colors.grey[200] : Colors.orange[50],
+                  color: Colors.orange[50],
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      Icon(produk.gambar, size: 50, color: stok == 0 ? Colors.grey : Colors.orange),
+                      Icon(produk.gambar, size: 50, color: Colors.orange),
                       if (qty > 0)
                         Positioned(
                           top: 8,
@@ -477,7 +468,7 @@ class _KasirScreenState extends State<KasirScreen> {
                       produk.nama,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontWeight: FontWeight.bold, color: stok == 0 ? Colors.grey : Colors.black87),
+                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87),
                     ),
                     const SizedBox(height: 4),
                     Row(
@@ -485,12 +476,9 @@ class _KasirScreenState extends State<KasirScreen> {
                       children: [
                         Text(
                           'Rp ${formatRupiah(produk.harga)}',
-                          style: TextStyle(color: stok == 0 ? Colors.grey : Colors.orange[800], fontWeight: FontWeight.bold),
+                          style: TextStyle(color: Colors.orange[800], fontWeight: FontWeight.bold),
                         ),
-                        Text(
-                          stok == 0 ? 'Habis' : 'Stok: $stok',
-                          style: TextStyle(color: stok == 0 ? Colors.red : Colors.grey[600], fontSize: 12),
-                        ),
+                        _buildStockBadge(produk.id!),
                       ],
                     ),
                   ],
@@ -499,6 +487,28 @@ class _KasirScreenState extends State<KasirScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildStockBadge(String produkId) {
+    final sisa = _estimasiStok[produkId];
+    if (sisa == null) return const SizedBox.shrink();
+
+    Color color = Colors.green[600]!;
+    if (sisa <= 0) color = Colors.red[600]!;
+    else if (sisa <= 5) color = Colors.orange[600]!;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withOpacity(0.5)),
+      ),
+      child: Text(
+        sisa <= 0 ? 'Habis' : '$sisa Porsi',
+        style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -571,7 +581,7 @@ class _KasirScreenState extends State<KasirScreen> {
                                   icon: const Icon(Icons.add_circle_outline),
                                   color: Colors.green,
                                   onPressed: () {
-                                     _tambahKeKeranjang(id, produk!.stok);
+                                     _tambahKeKeranjang(id);
                                      if (onUpdate != null) onUpdate();
                                   },
                                 ),
@@ -607,7 +617,9 @@ class _KasirScreenState extends State<KasirScreen> {
                     onTap: () {
                       int tempValue = _diskonValue;
                       bool tempIsPersen = _isDiskonPersen;
-                      final controller = TextEditingController(text: tempValue == 0 ? '' : tempValue.toString());
+                      final controller = TextEditingController(
+                        text: tempValue == 0 ? '' : (tempIsPersen ? tempValue.toString() : formatRupiah(tempValue))
+                      );
                       
                       showDialog(
                         context: context,
@@ -642,6 +654,7 @@ class _KasirScreenState extends State<KasirScreen> {
                                   TextField(
                                     controller: controller,
                                     keyboardType: TextInputType.number,
+                                    inputFormatters: tempIsPersen ? [] : [RibuanInputFormatter()],
                                     decoration: InputDecoration(
                                       labelText: tempIsPersen ? 'Persentase (%)' : 'Nominal (Rp)',
                                       prefixText: tempIsPersen ? '% ' : 'Rp ',
@@ -669,7 +682,7 @@ class _KasirScreenState extends State<KasirScreen> {
                                   ),
                                   onPressed: () {
                                     setState(() {
-                                      _diskonValue = int.tryParse(controller.text) ?? 0;
+                                      _diskonValue = int.tryParse(controller.text.replaceAll('.', '')) ?? 0;
                                       if (tempIsPersen && _diskonValue > 100) _diskonValue = 100;
                                       _isDiskonPersen = tempIsPersen;
                                     });

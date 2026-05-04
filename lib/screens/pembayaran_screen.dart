@@ -69,29 +69,31 @@ class _PembayaranScreenState extends State<PembayaranScreen> {
   }
 
   void _hitungKembalian() {
-    final bayar = int.tryParse(_bayarController.text) ?? 0;
+    final bayar = int.tryParse(_bayarController.text.replaceAll('.', '')) ?? 0;
     setState(() {
       _kembalian = bayar - widget.totalHarga;
     });
   }
 
   void _onKeyboardTap(String value) {
-    String currentText = _bayarController.text;
+    String currentText = _bayarController.text.replaceAll('.', '');
     if (value == 'clear') {
       _bayarController.text = '';
     } else if (value == 'backspace') {
       if (currentText.isNotEmpty) {
-        _bayarController.text = currentText.substring(0, currentText.length - 1);
+        String newText = currentText.substring(0, currentText.length - 1);
+        _bayarController.text = newText.isEmpty ? '' : formatRupiah(int.parse(newText));
       }
     } else {
       if (currentText.length < 12) {
-        _bayarController.text = currentText + value;
+        String newText = currentText + value;
+        _bayarController.text = formatRupiah(int.parse(newText));
       }
     }
   }
 
   void _setAmount(int amount) {
-    _bayarController.text = amount.toString();
+    _bayarController.text = formatRupiah(amount);
   }
 
   @override
@@ -367,7 +369,7 @@ class _PembayaranScreenState extends State<PembayaranScreen> {
 
   void _selesaikanPembayaran() async {
     if (_selectedMetode == 'Tunai') {
-      final bayar = int.tryParse(_bayarController.text) ?? 0;
+      final bayar = int.tryParse(_bayarController.text.replaceAll('.', '')) ?? 0;
       if (bayar < widget.totalHarga) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Nominal bayar kurang!')),
@@ -420,7 +422,10 @@ class _PembayaranScreenState extends State<PembayaranScreen> {
     
     // Auto-print if enabled
     if (PrinterService().autoPrint && PrinterService().isConnected) {
-      PrinterService().printReceipt(trx, PrinterService().storeName);
+      final ok = await PrinterService().printReceipt(trx, PrinterService().storeName);
+      if (ok && trx.id != null) {
+        await _transaksiRepo.updatePrintedStatus(trx.id!, true);
+      }
     }
 
     if (mounted) _showReceiptDialog(trx);
@@ -458,7 +463,7 @@ class _PembayaranScreenState extends State<PembayaranScreen> {
                   if (widget.diskon > 0) _receiptRow('Diskon ${widget.diskonInfo != null ? "(${widget.diskonInfo})" : ""}', '-Rp ${formatRupiah(widget.diskon)}'),
                   if (widget.pajak > 0) _receiptRow('Pajak ${widget.pajakInfo != null ? "(${widget.pajakInfo})" : ""}', '+Rp ${formatRupiah(widget.pajak)}'),
                   _receiptRow('Total', 'Rp ${formatRupiah(widget.totalHarga)}'),
-                  if (_selectedMetode == 'Tunai') _receiptRow('Bayar', 'Rp ${formatRupiah(int.parse(_bayarController.text.isEmpty ? '0' : _bayarController.text))}'),
+                  if (_selectedMetode == 'Tunai') _receiptRow('Bayar', 'Rp ${_bayarController.text.isEmpty ? '0' : _bayarController.text}'),
                   if (_selectedMetode == 'Tunai') _receiptRow('Kembali', 'Rp ${formatRupiah(_kembalian)}'),
                 ],
               ),
@@ -470,17 +475,21 @@ class _PembayaranScreenState extends State<PembayaranScreen> {
                 icon: const Icon(Icons.print, color: Colors.white),
                 label: const Text('Cetak Struk Physical', style: TextStyle(color: Colors.white)),
                 onPressed: () async {
-                  // Gunakan data trx yang sudah kita buat sebelumnya
-                  // Tapi pastikan harganya benar
                   final ok = await PrinterService().printReceipt(trx, PrinterService().storeName);
                   
                   if (ok && mounted) {
+                    if (trx.id != null) {
+                      await _transaksiRepo.updatePrintedStatus(trx.id!, true);
+                    }
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Struk sedang dikirim ke printer...'), backgroundColor: Colors.green),
+                      const SnackBar(content: Text('Struk berhasil dicetak'), backgroundColor: Colors.green),
                     );
+                    Navigator.pop(context); // Close dialog after print? Or just stay? 
+                    // User said "sudah tidak bisa di print", so maybe closing is good.
+                    Navigator.pop(context, true);
                   } else if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Gagal mencetak. Pastikan printer sudah terhubung di Pengaturan!')),
+                      const SnackBar(content: Text('Gagal mencetak. Pastikan printer sudah terhubung!')),
                     );
                   }
                 },

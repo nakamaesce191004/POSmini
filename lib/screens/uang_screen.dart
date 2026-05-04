@@ -10,6 +10,7 @@ import 'package:printing/printing.dart';
 import 'dart:typed_data';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
+import '../services/printer_service.dart';
 
 class UangScreen extends StatefulWidget {
   const UangScreen({super.key});
@@ -562,17 +563,30 @@ class _UangScreenState extends State<UangScreen> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              const Text('Pelanggan:', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                              Text(isPemasukan ? 'Pelanggan:' : 'Supplier:', style: const TextStyle(color: Colors.grey, fontSize: 13)),
                               Text(tx.pelanggan, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                             ],
                           ),
                         ),
-                      const SizedBox(height: 4),
-                      const Text('Daftar Produk / Item:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black87)),
-                      const SizedBox(height: 8),
-                      if (items.isNotEmpty)
+                      if (tx.deskripsi.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8.0),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Keterangan:', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Text(tx.deskripsi, textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (items.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        const Text('Daftar Produk / Item:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black87)),
+                        const SizedBox(height: 8),
                         ...items.map((item) {
-                          // Try finding product name 
                           String namaProd = item.namaProduk ?? 'Produk Tidak Dikenal';
                           int harga = item.hargaSaatIni;
                           int qty = item.qty;
@@ -588,9 +602,8 @@ class _UangScreenState extends State<UangScreen> {
                               ],
                             ),
                           );
-                        }).toList()
-                      else
-                        const Text('Tidak ada rincian item.', style: TextStyle(color: Colors.grey, fontSize: 13, fontStyle: FontStyle.italic)),
+                        }).toList(),
+                      ],
                       const SizedBox(height: 8),
                     ],
                   ),
@@ -734,12 +747,10 @@ class _UangScreenState extends State<UangScreen> {
 
     final pdfBytes = await pdf.save();
 
-    // Gunakan Printing.layoutPdf untuk handling yang lebih baik di semua platform (Android/iOS/Desktop)
-    // Di Android, ini akan memunculkan preview dan opsi "Save as PDF" secara langsung
     try {
-      await Printing.layoutPdf(
-        onLayout: (PdfPageFormat format) async => pdfBytes,
-        name: 'Laporan_Keuangan_${DateTime.now().day}_${DateTime.now().month}_${DateTime.now().year}.pdf',
+      await PrinterService().printPdfDocument(
+        pdf,
+        'Laporan_Keuangan_${DateTime.now().day}_${DateTime.now().month}_${DateTime.now().year}.pdf',
       );
     } catch (e) {
       if (mounted) {

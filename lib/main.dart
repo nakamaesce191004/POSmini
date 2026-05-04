@@ -10,23 +10,29 @@ import 'services/printer_service.dart';
 List<CameraDescription> cameras = [];
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  
-  if (!kIsWeb && (Platform.isWindows || Platform.isLinux)) {
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
-  }
-  
-  if (!kIsWeb && (Platform.isAndroid || Platform.isIOS || Platform.isWindows)) {
-    try {
-      cameras = await availableCameras();
-    } catch (e) {
-      debugPrint('Error initializing cameras: $e');
+  try {
+    WidgetsFlutterBinding.ensureInitialized();
+    
+    if (!kIsWeb && (Platform.isWindows || Platform.isLinux)) {
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
     }
-  }
+    
+    // Initialize Printer Service (non-blocking connection inside init)
+    await PrinterService().init();
 
-  // Initialize Printer Service
-  await PrinterService().init();
+    // Async camera initialization
+    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS || Platform.isWindows)) {
+      availableCameras().then((val) {
+        cameras = val;
+      }).catchError((e) {
+        debugPrint('Error initializing cameras: $e');
+      });
+    }
+
+  } catch (e) {
+    debugPrint('Critical startup error: $e');
+  }
 
   runApp(const MyApp());
 }

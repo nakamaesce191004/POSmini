@@ -8,10 +8,42 @@ import 'riwayat_presensi_screen.dart';
 import 'printer_settings_screen.dart';
 import 'ganti_pin_screen.dart';
 import 'kalkulator_hpp_screen.dart';
+import 'bahan_baku_screen.dart';
+import '../database/resep_repository.dart';
+import '../models/resep_model.dart';
 
-class AksiScreen extends StatelessWidget {
+class AksiScreen extends StatefulWidget {
   final VoidCallback? onBack;
   const AksiScreen({super.key, this.onBack});
+
+  @override
+  State<AksiScreen> createState() => _AksiScreenState();
+}
+
+class _AksiScreenState extends State<AksiScreen> {
+  final ResepRepository _repo = ResepRepository();
+  int _lowStockCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkStock();
+  }
+
+  Future<void> _checkStock() async {
+    final allBahan = await _repo.getAllBahan();
+    int count = 0;
+    for (var b in allBahan) {
+      if (b.totalBahan <= b.stokMinimal) {
+        count++;
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _lowStockCount = count;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -20,7 +52,7 @@ class AksiScreen extends StatelessWidget {
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: onBack ?? () => Navigator.pop(context),
+          onPressed: widget.onBack ?? () => Navigator.pop(context),
         ),
         title: const Text(
           'Menu Aksi',
@@ -51,10 +83,10 @@ class AksiScreen extends StatelessWidget {
                 _buildMenuItem(
                   context: context,
                   icon: Icons.inventory_2,
-                  iconColor: Colors.red[400]!,
-                  iconBgColor: Colors.red[50]!,
-                  title: 'Manajemen Produk (Stok)',
-                  subtitle: 'Kelola daftar barang & update stok',
+                  iconColor: Colors.blue[400]!,
+                  iconBgColor: Colors.blue[50]!,
+                  title: 'Manajemen Produk',
+                  subtitle: 'Kelola daftar barang & harga jual',
                   onTap: () {
                     Navigator.push(
                       context,
@@ -116,6 +148,37 @@ class AksiScreen extends StatelessWidget {
                   },
                 ),
                 const Divider(height: 1, indent: 64),
+                _buildMenuItem(
+                  context: context,
+                  icon: Icons.egg_outlined,
+                  iconColor: Colors.orange[400]!,
+                  iconBgColor: Colors.orange[50]!,
+                  title: 'Purchasing ',
+                  subtitle: 'Kelola bahan baku & harga modal',
+                  trailing: _lowStockCount > 0
+                      ? Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '$_lowStockCount Low',
+                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                          ),
+                        )
+                      : null,
+                  onTap: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const BahanBakuScreen(),
+                      ),
+                    );
+                    _checkStock(); // Refresh status setelah kembali
+                  },
+                ),
+                const Divider(height: 1, indent: 64),
               ],
             ),
           ),
@@ -140,11 +203,6 @@ class AksiScreen extends StatelessWidget {
                   title: 'Catat Pengeluaran/Pemasukan',
                   subtitle: 'Input data keuangan manual',
                   onTap: () {
-                    // Berpindah ke menu Uang (index 1 di HomeScreen)
-                    // Karena App ini menggunakan StatefulWidget di HomeScreen, 
-                    // cara termudah adalah dengan pop dulu baru ganti index via callback 
-                    // atau navigasi langsung ke UangScreen jika diizinkan (namun ini merusak BottomNav flow)
-                    // Untuk kemudahan, kita navigasi biasa saja.
                     Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -220,6 +278,7 @@ class AksiScreen extends StatelessWidget {
     required String title,
     required String subtitle,
     required VoidCallback onTap,
+    Widget? trailing,
   }) {
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -233,7 +292,7 @@ class AksiScreen extends StatelessWidget {
       ),
       title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
       subtitle: Text(subtitle, style: TextStyle(color: Colors.grey[500], fontSize: 13)),
-      trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+      trailing: trailing ?? const Icon(Icons.chevron_right, color: Colors.grey),
       onTap: onTap,
     );
   }

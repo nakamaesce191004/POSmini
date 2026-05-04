@@ -23,7 +23,7 @@ class DBHelper {
     String path = join(await getDatabasesPath(), 'kasirr.db');
     Database db = await openDatabase(
       path,
-      version: 7,
+      version: 9,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -40,7 +40,41 @@ class DBHelper {
     // Safety net v7: Pastikan tabel resep & bahan baku ada
     await _ensureRecipeTables(db);
 
+    // Safety net v8: Pastikan kolom stok_minimal & supplier ada
+    await _ensureBahanBakuColumns(db);
+
+    // Safety net v9: Pastikan kolom is_printed ada
+    await _ensureIsPrintedColumn(db);
+
     return db;
+  }
+
+  Future<void> _ensureIsPrintedColumn(Database db) async {
+    try {
+      final List<Map<String, dynamic>> res = await db.rawQuery('PRAGMA table_info(transaksi)');
+      final bool exists = res.any((col) => col['name'] == 'is_printed');
+      if (!exists) {
+        await db.execute('ALTER TABLE transaksi ADD COLUMN is_printed INTEGER DEFAULT 0');
+      }
+    } catch (e) {
+      debugPrint("Error ensuring is_printed column: $e");
+    }
+  }
+
+  Future<void> _ensureBahanBakuColumns(Database db) async {
+    try {
+      final List<Map<String, dynamic>> res = await db.rawQuery('PRAGMA table_info(bahan_baku)');
+      final columns = res.map((c) => c['name'].toString()).toList();
+      
+      if (!columns.contains('stok_minimal')) {
+        await db.execute('ALTER TABLE bahan_baku ADD COLUMN stok_minimal REAL DEFAULT 0');
+      }
+      if (!columns.contains('supplier')) {
+        await db.execute('ALTER TABLE bahan_baku ADD COLUMN supplier TEXT');
+      }
+    } catch (e) {
+      debugPrint("Error ensuring bahan_baku columns: $e");
+    }
   }
 
   Future<void> _ensureRecipeTables(Database db) async {
@@ -51,7 +85,9 @@ class DBHelper {
         total_belanja INTEGER,
         total_bahan REAL,
         satuan TEXT,
-        harga_per_satuan REAL
+        harga_per_satuan REAL,
+        stok_minimal REAL DEFAULT 0,
+        supplier TEXT
       )
     ''');
     await db.execute('''
@@ -188,6 +224,12 @@ class DBHelper {
     if (oldVersion < 7) {
       await _ensureRecipeTables(db);
     }
+    if (oldVersion < 8) {
+      await _ensureBahanBakuColumns(db);
+    }
+    if (oldVersion < 9) {
+      await _ensureIsPrintedColumn(db);
+    }
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -220,7 +262,8 @@ class DBHelper {
         diskon_info TEXT,
         pajak_info TEXT,
         no_meja TEXT,
-        status TEXT DEFAULT "Selesai"
+        status TEXT DEFAULT "Selesai",
+        is_printed INTEGER DEFAULT 0
       )
     ''');
 

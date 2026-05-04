@@ -5,6 +5,8 @@ class BahanBaku {
   final double totalBahan;
   final String satuan;
   final double hargaPerSatuan;
+  final double stokMinimal;
+  final String? supplier;
 
   BahanBaku({
     this.id,
@@ -13,6 +15,8 @@ class BahanBaku {
     required this.totalBahan,
     required this.satuan,
     required this.hargaPerSatuan,
+    this.stokMinimal = 0,
+    this.supplier,
   });
 
   Map<String, dynamic> toMap() {
@@ -23,6 +27,8 @@ class BahanBaku {
       'total_bahan': totalBahan,
       'satuan': satuan,
       'harga_per_satuan': hargaPerSatuan,
+      'stok_minimal': stokMinimal,
+      'supplier': supplier,
     };
   }
 
@@ -34,6 +40,8 @@ class BahanBaku {
       totalBahan: map['total_bahan'],
       satuan: map['satuan'],
       hargaPerSatuan: map['harga_per_satuan'],
+      stokMinimal: (map['stok_minimal'] ?? 0).toDouble(),
+      supplier: map['supplier'],
     );
   }
 }

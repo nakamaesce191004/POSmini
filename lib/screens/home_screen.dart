@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'kasir_screen.dart';
 import 'presensi_screen.dart';
-import 'tren_screen.dart';
+import 'settlement_screen.dart';
 import 'aksi_screen.dart';
 import 'login_screen.dart';
 
@@ -19,7 +19,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Widget> get _widgetOptions => <Widget>[
     const KasirScreen(),
     const PresensiScreen(),
-    TrenScreen(),
+    const SettlementScreen(),
     _getAksiContent(),
     const Center(child: Text('Pengaturan')), // Placeholder
   ];
@@ -89,7 +89,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     NavigationRailDestination(
                       icon: Icon(Icons.trending_up_outlined),
                       selectedIcon: Icon(Icons.trending_up),
-                      label: Text('Tren'),
+                      label: Text('Settlement'),
                     ),
                     NavigationRailDestination(
                       icon: Icon(Icons.flash_on_outlined),
@@ -125,7 +125,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 BottomNavigationBarItem(
                   icon: Icon(Icons.trending_up_outlined),
                   activeIcon: Icon(Icons.trending_up),
-                  label: 'Tren',
+                  label: 'Settlement',
                 ),
                 BottomNavigationBarItem(
                   icon: Icon(Icons.flash_on_outlined),

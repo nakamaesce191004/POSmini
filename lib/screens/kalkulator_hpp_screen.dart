@@ -32,6 +32,7 @@ class _KalkulatorHppScreenState extends State<KalkulatorHppScreen> {
   final TextEditingController _biayaTambahanController = TextEditingController();
   final TextEditingController _totalBahanController = TextEditingController();
   final TextEditingController _pemakaianController = TextEditingController();
+  TextEditingController? _autocompleteController; // Tambahkan ini
   List<RecipeIngredient> _recipeIngredients = [];
   List<BahanBaku> _allBahanBaku = [];
   String _selectedUnit = 'gram';
@@ -441,7 +442,59 @@ class _KalkulatorHppScreenState extends State<KalkulatorHppScreen> {
             'Input Perhitungan',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
+          if (_allBahanBaku.isNotEmpty) ...[
+            Text(
+              'Pilih dari Purchasing:',
+              style: TextStyle(color: Colors.grey[600], fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 40,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: _allBahanBaku.length,
+                itemBuilder: (context, index) {
+                  final b = _allBahanBaku[index];
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ActionChip(
+                      label: Text(b.nama),
+                      avatar: const Icon(Icons.inventory_2_outlined, size: 16),
+                      backgroundColor: Colors.orange[50],
+                      labelStyle: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
+                      side: BorderSide(color: Colors.orange.withOpacity(0.3)),
+                      onPressed: () {
+                        setState(() {
+                          _namaBahanController.text = b.nama;
+                          _autocompleteController?.text = b.nama; // Update teks di input
+                          _totalBelanjaController.text = formatRupiah(b.totalBelanja);
+                          _totalBahanController.text = b.totalBahan.toString();
+                          _biayaTambahanController.text = '0';
+                          
+                          // Set satuan
+                          final s = b.satuan.toLowerCase();
+                          if (['gram', 'ml', 'pcs'].contains(s)) {
+                            _selectedUnit = s;
+                          } else if (s == 'kg') {
+                            _selectedUnit = 'gram';
+                            _totalBahanController.text = (b.totalBahan * 1000).toString();
+                          } else if (s == 'liter') {
+                            _selectedUnit = 'ml';
+                            _totalBahanController.text = (b.totalBahan * 1000).toString();
+                          }
+                          _updateResult();
+                        });
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Divider(height: 1),
+            const SizedBox(height: 16),
+          ],
           Autocomplete<BahanBaku>(
             optionsBuilder: (TextEditingValue textEditingValue) {
               if (textEditingValue.text.isEmpty) {
@@ -455,26 +508,27 @@ class _KalkulatorHppScreenState extends State<KalkulatorHppScreen> {
             onSelected: (BahanBaku selection) {
               setState(() {
                 _namaBahanController.text = selection.nama;
-                _totalBelanjaController.text = selection.totalBelanja.round().toString();
+                _autocompleteController?.text = selection.nama;
+                _totalBelanjaController.text = formatRupiah(selection.totalBelanja);
                 _totalBahanController.text = selection.totalBahan.toString();
                 _biayaTambahanController.text = '0';
                 
-                // Map unit string back to internal gram/ml/pcs
-                final s = selection.satuan?.toLowerCase() ?? 'gram';
-                if (s == 'gram' || s == 'ml' || s == 'pcs') {
+                final s = selection.satuan.toLowerCase();
+                if (['gram', 'ml', 'pcs'].contains(s)) {
                   _selectedUnit = s;
-                } else if (s == 'kg' || s == 'liter') {
-                  // Conversion if needed, but let's stick to base units for simplicity 
-                  // based on our previous logic. 
+                } else if (s == 'kg') {
                   _selectedUnit = 'gram';
+                  _totalBahanController.text = (selection.totalBahan * 1000).toString();
+                } else if (s == 'liter') {
+                  _selectedUnit = 'ml';
+                  _totalBahanController.text = (selection.totalBahan * 1000).toString();
                 }
                 _updateResult();
               });
             },
             fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-              // Sync our controller with the autocompletes controller
-              if (controller.text != _namaBahanController.text && _namaBahanController.text.isNotEmpty && controller.text.isEmpty) {
-                controller.text = _namaBahanController.text;
+              if (_autocompleteController != controller) {
+                 _autocompleteController = controller; 
               }
               
               return TextField(
