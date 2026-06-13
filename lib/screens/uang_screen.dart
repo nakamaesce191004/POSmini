@@ -10,6 +10,7 @@ import 'package:printing/printing.dart';
 import 'dart:typed_data';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
+import 'package:fl_chart/fl_chart.dart';
 import '../services/printer_service.dart';
 
 class UangScreen extends StatefulWidget {
@@ -28,6 +29,8 @@ class _UangScreenState extends State<UangScreen> {
   
   List<Transaksi> _allTransaksi = [];
   List<Produk> _allProduk = [];
+  List<DashboardTrendPoint> _trendData = [];
+  DashboardSummary? _summary;
   bool _isLoading = true;
 
   @override
@@ -40,10 +43,55 @@ class _UangScreenState extends State<UangScreen> {
     setState(() => _isLoading = true);
     final trx = await _transaksiRepo.getAll();
     final prd = await _produkRepo.getAll();
+    
+    // Load trend data based on filter
+    int days = 7;
+    String? customStart;
+    if (_selectedFilter == 'Bulan Ini') {
+      days = 30;
+    } else if (_selectedFilter == 'Tahun Ini') {
+      days = 365;
+    } else if (_selectedFilter == 'Pilih Tanggal' && _customDateRange != null) {
+      days = _customDateRange!.end.difference(_customDateRange!.start).inDays + 1;
+      customStart = _customDateRange!.start.toIso8601String().split('T')[0];
+    }
+    
+    final trend = await _transaksiRepo.getDashboardTrend(days: days, customStartDate: customStart);
+    
+    // Determine summary period
+    String? sDate;
+    String? eDate;
+    final now = DateTime.now();
+
+    if (_selectedFilter == 'Hari Ini') {
+      sDate = now.toIso8601String().split('T')[0];
+      eDate = "${sDate}T23:59:59";
+    } else if (_selectedFilter == 'Bulan Ini') {
+      sDate = DateTime(now.year, now.month, 1).toIso8601String().split('T')[0];
+      eDate = "${now.toIso8601String().split('T')[0]}T23:59:59";
+    } else if (_selectedFilter == 'Tahun Ini') {
+      sDate = DateTime(now.year, 1, 1).toIso8601String().split('T')[0];
+      eDate = "${now.toIso8601String().split('T')[0]}T23:59:59";
+    } else if (_selectedFilter == 'Pilih Tanggal' && _customDateRange != null) {
+      sDate = _customDateRange!.start.toIso8601String().split('T')[0];
+      eDate = "${_customDateRange!.end.toIso8601String().split('T')[0]}T23:59:59";
+    } else {
+      // Fallback to last 7 days
+      sDate = now.subtract(const Duration(days: 6)).toIso8601String().split('T')[0];
+      eDate = "${now.toIso8601String().split('T')[0]}T23:59:59";
+    }
+
+    final summary = await _transaksiRepo.getDashboardSummary(
+      startDate: sDate,
+      endDate: eDate,
+    );
+
     if (mounted) {
       setState(() {
         _allTransaksi = trx;
         _allProduk = prd;
+        _trendData = trend;
+        _summary = summary;
         _isLoading = false;
       });
     }
@@ -124,6 +172,7 @@ class _UangScreenState extends State<UangScreen> {
         _selectedFilter = 'Pilih Tanggal';
         _customDateRange = picked;
       });
+      _loadData(); // Reload trend and transaction data
     }
   }
 
@@ -231,18 +280,6 @@ class _UangScreenState extends State<UangScreen> {
         title: const Text('Keuangan Toko', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.picture_as_pdf_outlined, color: Colors.blue),
-            onPressed: _generateReportPDF,
-            tooltip: 'Download Laporan PDF',
-          ),
-          IconButton(
-            icon: const Icon(Icons.add_box_outlined, color: Colors.orange),
-            onPressed: _tambahTransaksiManual,
-            tooltip: 'Tambah Transaksi',
-          ),
-        ],
       ),
       body: Center(
         child: ConstrainedBox(
@@ -310,14 +347,16 @@ class _UangScreenState extends State<UangScreen> {
                 ],
               ),
               const SizedBox(height: 16),
-              _buildSummaryCard(),
+              if (_summary != null) ...[
+                _buildHeroCard(_summary!),
+                const SizedBox(height: 24),
+                _buildSummaryGrid(_summary!),
+              ],
               const SizedBox(height: 24),
-              const Text(
-                'Detail Transaksi',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              _buildTransactionList(sortedTransaksi),
+              _buildChartSection(),
+              const SizedBox(height: 24),
+              _buildTopProductsChart(),
+              const SizedBox(height: 32),
             ],
           ),
         ),
@@ -332,6 +371,7 @@ class _UangScreenState extends State<UangScreen> {
         setState(() {
           _selectedFilter = label;
         });
+        _loadData();
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -357,23 +397,182 @@ class _UangScreenState extends State<UangScreen> {
     );
   }
 
-  Widget _buildSummaryCard() {
-    return Column(
-      children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Colors.orange[800]!, Colors.orange[400]!],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+  Widget _buildHeroCard(DashboardSummary summary) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(28),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF173B6D), Color(0xFF2F6FD3)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x33173B6D),
+            blurRadius: 24,
+            offset: Offset(0, 14),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.14),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(Icons.insights_rounded, color: Colors.white),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Ringkasan Keuangan Real-time',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'Rp ${formatRupiah(summary.laba)}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 34,
+              fontWeight: FontWeight.bold,
             ),
-            borderRadius: BorderRadius.circular(24),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Laba dihitung dari penjualan bersih dikurangi HPP${summary.totalPengeluaranManual > 0 ? ' dan pengeluaran manual Rp ${formatRupiah(summary.totalPengeluaranManual)}' : ''}.',
+            style: const TextStyle(
+              color: Colors.white70,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSummaryGrid(DashboardSummary summary) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cards = [
+          _buildMetricCard(
+            title: 'Total Penjualan',
+            value: 'Rp ${formatRupiah(summary.totalPenjualan)}',
+            subtitle: 'Semua transaksi pemasukan',
+            icon: Icons.payments_outlined,
+            accent: const Color(0xFF0C9B63),
+          ),
+          _buildMetricCard(
+            title: 'HPP',
+            value: 'Rp ${formatRupiah(summary.totalHpp)}',
+            subtitle: 'Modal barang terjual',
+            icon: Icons.inventory_2_outlined,
+            accent: const Color(0xFFD9485F),
+          ),
+          _buildMetricCard(
+            title: 'Laba',
+            value: 'Rp ${formatRupiah(summary.laba)}',
+            subtitle: summary.totalPengeluaranManual > 0 ? 'Penjualan - HPP - Biaya' : 'Penjualan dikurangi HPP',
+            icon: Icons.trending_up_rounded,
+            accent: const Color(0xFF3C64F4),
+          ),
+          _buildMetricCard(
+            title: 'Produk Terjual',
+            value: '${formatRupiah(summary.totalProdukTerjual)} item',
+            subtitle: 'Total qty transaksi penjualan',
+            icon: Icons.shopping_bag_outlined,
+            accent: const Color(0xFFB77212),
+          ),
+        ];
+
+        if (constraints.maxWidth >= 900) {
+          return Row(
+            children: [
+              Expanded(child: cards[0]),
+              const SizedBox(width: 12),
+              Expanded(child: cards[1]),
+              const SizedBox(width: 12),
+              Expanded(child: cards[2]),
+              const SizedBox(width: 12),
+              Expanded(child: cards[3]),
+            ],
+          );
+        }
+
+        if (constraints.maxWidth < 320) {
+          return Column(
+            children: [
+              cards[0],
+              const SizedBox(height: 12),
+              cards[1],
+              const SizedBox(height: 12),
+              cards[2],
+              const SizedBox(height: 12),
+              cards[3],
+            ],
+          );
+        }
+
+        if (constraints.maxWidth < 900) {
+          return Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(child: cards[0]),
+                  const SizedBox(width: 12),
+                  Expanded(child: cards[1]),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(child: cards[2]),
+                  const SizedBox(width: 12),
+                  Expanded(child: cards[3]),
+                ],
+              ),
+            ],
+          );
+        }
+
+        return const SizedBox.shrink();
+      },
+    );
+  }
+
+  Widget _buildMetricCard({
+    required String title,
+    required String value,
+    required String subtitle,
+    required IconData icon,
+    required Color accent,
+  }) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isCompact = constraints.maxWidth < 190;
+        return Container(
+          width: double.infinity,
+          padding: EdgeInsets.all(isCompact ? 14 : 18),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: const Color(0xFFE6EBF4)),
             boxShadow: [
               BoxShadow(
-                color: Colors.orange.withOpacity(0.3),
-                blurRadius: 15,
+                color: Colors.black.withOpacity(0.03),
+                blurRadius: 14,
                 offset: const Offset(0, 8),
               ),
             ],
@@ -381,240 +580,269 @@ class _UangScreenState extends State<UangScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
-                    child: const Icon(Icons.account_balance_wallet, color: Colors.white, size: 24),
-                  ),
-                  const SizedBox(width: 12),
-                  const Text('Laba Bersih', style: TextStyle(color: Colors.white, fontSize: 16)),
-                ],
+              Container(
+                padding: EdgeInsets.all(isCompact ? 9 : 11),
+                decoration: BoxDecoration(
+                  color: accent.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: accent, size: isCompact ? 22 : 24),
               ),
-              const SizedBox(height: 16),
+              SizedBox(height: isCompact ? 14 : 16),
               Text(
-                'Rp ${formatRupiah(_labaBersih)}',
-                style: const TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: Colors.white),
+                title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: isCompact ? 13 : 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: isCompact ? 20 : 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                subtitle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.grey[600],
+                  fontSize: isCompact ? 11 : 12,
+                ),
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.grey[200]!),
-                  boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 10)],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(color: Colors.green[50], shape: BoxShape.circle),
-                          child: Icon(Icons.arrow_downward, color: Colors.green[600], size: 16),
-                        ),
-                        const SizedBox(width: 8),
-                        const Text('Pemasukan', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Text('Rp ${formatRupiah(_pemasukan)}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green)),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.grey[200]!),
-                  boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 10)],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(color: Colors.red[50], shape: BoxShape.circle),
-                          child: Icon(Icons.arrow_upward, color: Colors.red[600], size: 16),
-                        ),
-                        const SizedBox(width: 8),
-                        const Text('Pengeluaran', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Text('Rp ${formatRupiah(_pengeluaran)}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.red)),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ],
+        );
+      },
     );
   }
 
-  Widget _buildTransactionList(List<Transaksi> transaksi) {
-    if (transaksi.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32.0),
-          child: Column(
-            children: [
-              Icon(Icons.receipt_long, size: 64, color: Colors.grey[300]),
-              const SizedBox(height: 16),
-              Text('Tidak ada transaksi di periode ini', style: TextStyle(color: Colors.grey[500])),
-            ],
+  Widget _buildChartSection() {
+    if (_trendData.isEmpty) return const SizedBox.shrink();
+
+    // Data points for LineChart
+    final List<FlSpot> spots = [];
+    double maxVal = 0;
+
+    for (int i = 0; i < _trendData.length; i++) {
+      final p = _trendData[i];
+      final val = p.totalPenjualan.toDouble();
+      spots.add(FlSpot(i.toDouble(), val));
+      if (val > maxVal) maxVal = val;
+    }
+
+    if (maxVal == 0) maxVal = 10000; // Minimal height if no data
+
+    return Container(
+      height: 250,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.grey[100]!),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Tren Penjualan', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 20),
+          Expanded(
+            child: LineChart(
+              LineChartData(
+                gridData: FlGridData(
+                  show: true,
+                  drawVerticalLine: false,
+                  getDrawingHorizontalLine: (value) => FlLine(color: Colors.grey[100], strokeWidth: 1),
+                ),
+                titlesData: FlTitlesData(
+                  show: true,
+                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 22,
+                      interval: _trendData.length > 7 ? (_trendData.length / 5) : 1,
+                      getTitlesWidget: (value, meta) {
+                        int index = value.toInt();
+                        if (index < 0 || index >= _trendData.length) return const Text('');
+                        final date = _trendData[index].tanggal;
+                        return Text(
+                          '${date.day}/${date.month}',
+                          style: const TextStyle(color: Colors.grey, fontSize: 10),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                borderData: FlBorderData(show: false),
+                minX: 0,
+                maxX: (_trendData.length - 1).toDouble(),
+                minY: 0,
+                maxY: maxVal * 1.2,
+                lineBarsData: [
+                  LineChartBarData(
+                    spots: spots,
+                    isCurved: true,
+                    color: Colors.orange[800],
+                    barWidth: 3,
+                    isStrokeCapRound: true,
+                    dotData: const FlDotData(show: false),
+                    belowBarData: BarAreaData(
+                      show: true,
+                      color: Colors.orange[800]!.withOpacity(0.1),
+                    ),
+                  ),
+                ],
+                lineTouchData: LineTouchData(
+                  touchTooltipData: LineTouchTooltipData(
+                    getTooltipColor: (spot) => Colors.orange[800]!,
+                    getTooltipItems: (touchedSpots) {
+                      return touchedSpots.map((s) {
+                        return LineTooltipItem(
+                          'Rp ${formatRupiah(s.y.toInt())}',
+                          const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                        );
+                      }).toList();
+                    },
+                  ),
+                ),
+              ),
+            ),
           ),
-        ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTopProductsChart() {
+    // Aggregate product sales
+    final Map<String, int> productSales = {};
+    for (var tx in _filteredTransaksi) {
+      if (tx.jenis == 'pemasukan') {
+        for (var item in tx.items) {
+          final name = item.namaProduk ?? 'Produk';
+          productSales.update(name, (val) => val + item.qty, ifAbsent: () => item.qty);
+        }
+      }
+    }
+
+    if (productSales.isEmpty) {
+      return Container(
+        height: 200,
+        alignment: Alignment.center,
+        child: const Text('Belum ada data penjualan produk', style: TextStyle(color: Colors.grey)),
       );
     }
 
+    // Sort and take top 5
+    final sortedEntries = productSales.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final topEntries = sortedEntries.take(5).toList();
+
+    final List<Color> colors = [
+      Colors.blue[400]!,
+      Colors.green[400]!,
+      Colors.orange[400]!,
+      Colors.purple[400]!,
+      Colors.red[400]!,
+    ];
+
     return Container(
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.grey[200]!),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.grey[100]!),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4)),
+        ],
       ),
-      child: ListView.separated(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: transaksi.length,
-        separatorBuilder: (context, index) => const Divider(height: 1),
-        itemBuilder: (context, index) {
-          final tx = transaksi[index];
-          final isPemasukan = tx.jenis == 'pemasukan';
-          final date = tx.tanggal;
-          final items = tx.items;
-          
-          return Theme(
-            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-            child: ExpansionTile(
-              leading: CircleAvatar(
-                backgroundColor: isPemasukan ? Colors.green[50] : Colors.red[50],
-                child: Icon(
-                  isPemasukan ? Icons.south_west : Icons.north_east,
-                  color: isPemasukan ? Colors.green : Colors.red,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Produk Terlaris', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 24),
+          Row(
+            children: [
+              Expanded(
+                flex: 4,
+                child: SizedBox(
+                  height: 180,
+                  child: PieChart(
+                    PieChartData(
+                      sectionsSpace: 4,
+                      centerSpaceRadius: 40,
+                      sections: topEntries.asMap().entries.map((e) {
+                        final i = e.key;
+                        final entry = e.value;
+                        return PieChartSectionData(
+                          color: colors[i % colors.length],
+                          value: entry.value.toDouble(),
+                          title: '${entry.value}',
+                          radius: 50,
+                          titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+                        );
+                      }).toList(),
+                    ),
+                  ),
                 ),
               ),
-              title: Text(tx.deskripsi, style: const TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: Text(
-                '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}',
-                style: const TextStyle(fontSize: 12),
-              ),
-              trailing: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '${isPemasukan ? '+' : '-'} Rp ${formatRupiah(tx.nominal)}',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                      color: isPemasukan ? Colors.green[700] : Colors.red[700],
-                    ),
-                  ),
-                  const Icon(Icons.expand_more, size: 16, color: Colors.grey),
-                ],
-              ),
-              children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[50],
-                    borderRadius: const BorderRadius.only(
-                      bottomLeft: Radius.circular(20),
-                      bottomRight: Radius.circular(20),
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Divider(),
-                      if (tx.metode.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 8.0),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text('Metode Pembayaran:', style: TextStyle(color: Colors.grey, fontSize: 13)),
-                              Text(tx.metode, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                            ],
+              const SizedBox(width: 20),
+              Expanded(
+                flex: 6,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: topEntries.asMap().entries.map((e) {
+                    final i = e.key;
+                    final entry = e.value;
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 12,
+                            height: 12,
+                            decoration: BoxDecoration(color: colors[i % colors.length], borderRadius: BorderRadius.circular(3)),
                           ),
-                        ),
-                      if (tx.pelanggan.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 8.0),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(isPemasukan ? 'Pelanggan:' : 'Supplier:', style: const TextStyle(color: Colors.grey, fontSize: 13)),
-                              Text(tx.pelanggan, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                            ],
-                          ),
-                        ),
-                      if (tx.deskripsi.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 8.0),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text('Keterangan:', style: TextStyle(color: Colors.grey, fontSize: 13)),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                child: Text(tx.deskripsi, textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                              ),
-                            ],
-                          ),
-                        ),
-                      if (items.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        const Text('Daftar Produk / Item:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black87)),
-                        const SizedBox(height: 8),
-                        ...items.map((item) {
-                          String namaProd = item.namaProduk ?? 'Produk Tidak Dikenal';
-                          int harga = item.hargaSaatIni;
-                          int qty = item.qty;
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 4.0),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Expanded(
-                                  child: Text('$namaProd x $qty', style: const TextStyle(fontSize: 13)),
-                                ),
-                                Text('Rp ${formatRupiah(harga * qty)}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-                              ],
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              entry.key,
+                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                              overflow: TextOverflow.ellipsis,
                             ),
-                          );
-                        }).toList(),
-                      ],
-                      const SizedBox(height: 8),
-                    ],
-                  ),
+                          ),
+                          Text('${entry.value}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    );
+                  }).toList(),
                 ),
-              ],
-            ),
-          );
-        },
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
+
+  // Widget _buildTransactionList(List<Transaksi> transaksi) { ... removed ...
 
   Future<void> _generateReportPDF() async {
     final pdf = pw.Document();

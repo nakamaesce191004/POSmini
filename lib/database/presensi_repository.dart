@@ -24,4 +24,19 @@ class PresensiRepository {
     final db = await _dbHelper.database;
     return await db.delete('presensi');
   }
+
+  Future<String?> getLastStatus(String namaKaryawan) async {
+    final db = await _dbHelper.database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'presensi',
+      where: 'nama_karyawan = ?',
+      whereArgs: [namaKaryawan],
+      orderBy: 'waktu DESC',
+      limit: 1,
+    );
+    if (maps.isNotEmpty) {
+      return maps.first['status'] as String?;
+    }
+    return null;
+  }
 }

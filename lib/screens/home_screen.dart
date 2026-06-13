@@ -3,10 +3,12 @@ import 'kasir_screen.dart';
 import 'presensi_screen.dart';
 import 'settlement_screen.dart';
 import 'aksi_screen.dart';
-import 'login_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final String role;
+  final VoidCallback? onLogout;
+  const HomeScreen({super.key, required this.role, this.onLogout});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -14,47 +16,37 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
-  bool _isAuthenticated = false;
 
-  List<Widget> get _widgetOptions => <Widget>[
-    const KasirScreen(),
-    const PresensiScreen(),
-    const SettlementScreen(),
-    _getAksiContent(),
-    const Center(child: Text('Pengaturan')), // Placeholder
-  ];
-
-  Widget _getAksiContent() {
-    if (!_isAuthenticated) {
-      return LoginScreen(
-        onLoginSuccess: () {
-          setState(() {
-            _isAuthenticated = true;
-          });
-        },
+  List<Widget> get _widgetOptions {
+    if (widget.role == 'kasir') {
+      return <Widget>[
+        const KasirScreen(),
+        const PresensiScreen(),
+        const SettlementScreen(),
+      ];
+    }
+    return <Widget>[
+      const KasirScreen(),
+      const PresensiScreen(),
+      const SettlementScreen(),
+      AksiScreen(
         onBack: () {
           setState(() {
             _selectedIndex = 0;
           });
         },
-      );
-    }
-    return AksiScreen(
-      onBack: () {
-        setState(() {
-          _selectedIndex = 0;
-          _isAuthenticated = false;
-        });
-      },
-    );
+      ),
+      SettingsScreen(onLogout: widget.onLogout),
+    ];
   }
 
+
   void _onItemTapped(int index) {
+    if (widget.role == 'kasir' && index == 3) {
+      if (widget.onLogout != null) widget.onLogout!();
+      return;
+    }
     setState(() {
-      // Jika keluar dari Menu Aksi (index 3), reset status login
-      if (_selectedIndex == 3 && index != 3) {
-        _isAuthenticated = false;
-      }
       _selectedIndex = index;
     });
   }
@@ -75,33 +67,50 @@ class _HomeScreenState extends State<HomeScreen> {
                   selectedIconTheme: const IconThemeData(color: Colors.orange),
                   unselectedIconTheme: const IconThemeData(color: Colors.grey),
                   selectedLabelTextStyle: const TextStyle(color: Colors.orange),
-                  destinations: const <NavigationRailDestination>[
-                    NavigationRailDestination(
+                  destinations: <NavigationRailDestination>[
+                    const NavigationRailDestination(
                       icon: Icon(Icons.calculate_outlined),
                       selectedIcon: Icon(Icons.calculate),
                       label: Text('Kasir'),
                     ),
-                    NavigationRailDestination(
+                    const NavigationRailDestination(
                       icon: Icon(Icons.assignment_ind_outlined),
                       selectedIcon: Icon(Icons.assignment_ind),
                       label: Text('Presensi'),
                     ),
-                    NavigationRailDestination(
+                    const NavigationRailDestination(
                       icon: Icon(Icons.trending_up_outlined),
                       selectedIcon: Icon(Icons.trending_up),
                       label: Text('Settlement'),
                     ),
-                    NavigationRailDestination(
-                      icon: Icon(Icons.flash_on_outlined),
-                      selectedIcon: Icon(Icons.flash_on),
-                      label: Text('Aksi'),
-                    ),
-                    NavigationRailDestination(
-                      icon: Icon(Icons.settings_outlined),
-                      selectedIcon: Icon(Icons.settings),
-                      label: Text('Pengaturan'),
-                    ),
+                    if (widget.role == 'admin') ...[
+                      const NavigationRailDestination(
+                        icon: Icon(Icons.flash_on_outlined),
+                        selectedIcon: Icon(Icons.flash_on),
+                        label: Text('Aksi'),
+                      ),
+                      const NavigationRailDestination(
+                        icon: Icon(Icons.settings_outlined),
+                        selectedIcon: Icon(Icons.settings),
+                        label: Text('Pengaturan'),
+                      ),
+                    ],
                   ],
+                  trailing: widget.role == 'kasir' 
+                    ? Expanded(
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: Padding(
+                            padding: const EdgeInsets.only(bottom: 16),
+                            child: IconButton(
+                              icon: const Icon(Icons.logout, color: Colors.red),
+                              onPressed: widget.onLogout,
+                              tooltip: 'Keluar',
+                            ),
+                          ),
+                        ),
+                      )
+                    : null,
                 ),
                 const VerticalDivider(thickness: 1, width: 1),
                 Expanded(child: _widgetOptions[_selectedIndex]),
@@ -111,32 +120,40 @@ class _HomeScreenState extends State<HomeScreen> {
       bottomNavigationBar: isDesktop
           ? null
           : BottomNavigationBar(
-              items: const <BottomNavigationBarItem>[
-                BottomNavigationBarItem(
+              items: <BottomNavigationBarItem>[
+                const BottomNavigationBarItem(
                   icon: Icon(Icons.calculate_outlined),
                   activeIcon: Icon(Icons.calculate),
                   label: 'Kasir',
                 ),
-                BottomNavigationBarItem(
+                const BottomNavigationBarItem(
                   icon: Icon(Icons.assignment_ind_outlined),
                   activeIcon: Icon(Icons.assignment_ind),
                   label: 'Presensi',
                 ),
-                BottomNavigationBarItem(
+                const BottomNavigationBarItem(
                   icon: Icon(Icons.trending_up_outlined),
                   activeIcon: Icon(Icons.trending_up),
                   label: 'Settlement',
                 ),
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.flash_on_outlined),
-                  activeIcon: Icon(Icons.flash_on),
-                  label: 'Aksi',
-                ),
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.settings_outlined),
-                  activeIcon: Icon(Icons.settings),
-                  label: 'Pengaturan',
-                ),
+                if (widget.role == 'admin') ...[
+                  const BottomNavigationBarItem(
+                    icon: Icon(Icons.flash_on_outlined),
+                    activeIcon: Icon(Icons.flash_on),
+                    label: 'Aksi',
+                  ),
+                  const BottomNavigationBarItem(
+                    icon: Icon(Icons.settings_outlined),
+                    activeIcon: Icon(Icons.settings),
+                    label: 'Pengaturan',
+                  ),
+                ],
+                if (widget.role == 'kasir') ...[
+                  const BottomNavigationBarItem(
+                    icon: Icon(Icons.logout, color: Colors.red),
+                    label: 'Keluar',
+                  ),
+                ],
               ],
               currentIndex: _selectedIndex,
               selectedItemColor: Colors.orange,

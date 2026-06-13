@@ -23,7 +23,7 @@ class DBHelper {
     String path = join(await getDatabasesPath(), 'kasirr.db');
     Database db = await openDatabase(
       path,
-      version: 9,
+      version: 13,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -46,7 +46,81 @@ class DBHelper {
     // Safety net v9: Pastikan kolom is_printed ada
     await _ensureIsPrintedColumn(db);
 
+    // Safety net v10: Pastikan tabel meja ada
+    await _ensureMejaTable(db);
+
+    // Safety net v11: Pastikan kolom is_settled ada
+    await _ensureIsSettledColumn(db);
+
+    // Safety net v12: Pastikan tabel users ada
+    await _ensureUsersTable(db);
+
+    // Safety net v13: Pastikan tabel karyawan ada
+    await _ensureKaryawanTable(db);
+
     return db;
+  }
+
+  Future<void> _ensureKaryawanTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS karyawan (
+        id TEXT PRIMARY KEY,
+        nama TEXT NOT NULL,
+        posisi TEXT,
+        telepon TEXT
+      )
+    ''');
+  }
+
+  Future<void> _ensureUsersTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        nama TEXT NOT NULL,
+        username TEXT UNIQUE NOT NULL DEFAULT '',
+        email TEXT NOT NULL,
+        password TEXT NOT NULL,
+        role TEXT DEFAULT 'admin',
+        reset_token TEXT,
+        reset_token_expiry TEXT
+      )
+    ''');
+    // Migrasi: tambah kolom username jika belum ada
+    try {
+      final List<Map<String, dynamic>> res =
+          await db.rawQuery('PRAGMA table_info(users)');
+      final columns = res.map((c) => c['name'].toString()).toList();
+      if (!columns.contains('username')) {
+        await db.execute(
+            'ALTER TABLE users ADD COLUMN username TEXT DEFAULT ""');
+      }
+    } catch (e) {
+      debugPrint('Error ensuring username column: $e');
+    }
+  }
+
+  Future<void> _ensureMejaTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS meja (
+        id TEXT PRIMARY KEY,
+        nama TEXT NOT NULL,
+        kategori TEXT,
+        isActive INTEGER DEFAULT 1
+      )
+    ''');
+    
+    // Seed initial tables if empty
+    final List<Map<String, dynamic>> maps = await db.query('meja');
+    if (maps.isEmpty) {
+      for (int i = 1; i <= 20; i++) {
+        await db.insert('meja', {
+          'id': i.toString(),
+          'nama': 'Meja $i',
+          'kategori': 'Umum',
+          'isActive': 1,
+        });
+      }
+    }
   }
 
   Future<void> _ensureIsPrintedColumn(Database db) async {
@@ -58,6 +132,18 @@ class DBHelper {
       }
     } catch (e) {
       debugPrint("Error ensuring is_printed column: $e");
+    }
+  }
+
+  Future<void> _ensureIsSettledColumn(Database db) async {
+    try {
+      final List<Map<String, dynamic>> res = await db.rawQuery('PRAGMA table_info(transaksi)');
+      final bool exists = res.any((col) => col['name'] == 'is_settled');
+      if (!exists) {
+        await db.execute('ALTER TABLE transaksi ADD COLUMN is_settled INTEGER DEFAULT 0');
+      }
+    } catch (e) {
+      debugPrint("Error ensuring is_settled column: $e");
     }
   }
 
@@ -165,6 +251,25 @@ class DBHelper {
         'value': '1234',
       });
     }
+
+    // Cek apakah Akun Admin sudah ada, jika belum masukkan default
+    final List<Map<String, dynamic>> userMaps = await db.query(
+      'settings',
+      where: 'id = ?',
+      whereArgs: ['admin_username'],
+    );
+    if (userMaps.isEmpty) {
+      await db.insert('settings', {
+        'id': 'admin_username',
+        'key': 'username',
+        'value': 'admin',
+      });
+      await db.insert('settings', {
+        'id': 'admin_password',
+        'key': 'password',
+        'value': 'admin123',
+      });
+    }
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -230,6 +335,18 @@ class DBHelper {
     if (oldVersion < 9) {
       await _ensureIsPrintedColumn(db);
     }
+    if (oldVersion < 10) {
+      await _ensureMejaTable(db);
+    }
+    if (oldVersion < 11) {
+      await _ensureIsSettledColumn(db);
+    }
+    if (oldVersion < 12) {
+      await _ensureUsersTable(db);
+    }
+    if (oldVersion < 13) {
+      await _ensureKaryawanTable(db);
+    }
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -263,7 +380,8 @@ class DBHelper {
         pajak_info TEXT,
         no_meja TEXT,
         status TEXT DEFAULT "Selesai",
-        is_printed INTEGER DEFAULT 0
+        is_printed INTEGER DEFAULT 0,
+        is_settled INTEGER DEFAULT 0
       )
     ''');
 
@@ -314,6 +432,37 @@ class DBHelper {
         id TEXT PRIMARY KEY,
         key TEXT,
         value TEXT
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE meja (
+        id TEXT PRIMARY KEY,
+        nama TEXT NOT NULL,
+        kategori TEXT,
+        isActive INTEGER DEFAULT 1
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        nama TEXT NOT NULL,
+        username TEXT UNIQUE NOT NULL DEFAULT '',
+        email TEXT NOT NULL,
+        password TEXT NOT NULL,
+        role TEXT DEFAULT 'admin',
+        reset_token TEXT,
+        reset_token_expiry TEXT
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS karyawan (
+        id TEXT PRIMARY KEY,
+        nama TEXT NOT NULL,
+        posisi TEXT,
+        telepon TEXT
       )
     ''');
 

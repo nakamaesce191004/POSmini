@@ -1,10 +1,11 @@
-import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
 import '../database/transaksi_repository.dart';
+import '../database/meja_repository.dart';
 import '../models/transaksi_model.dart';
 import '../database/produk_repository.dart';
 import '../services/printer_service.dart';
+import '../models/meja_model.dart';
 import '../utils/formatters.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -19,19 +20,6 @@ class SettlementScreen extends StatefulWidget {
 
 class _SettlementScreenState extends State<SettlementScreen> {
   final TransaksiRepository _transaksiRepo = TransaksiRepository();
-
-  String _selectedFilter = 'Semua'; // 'Hari Ini', 'Bulan Ini', 'Pilih Tanggal', 'Semua'
-  DateTimeRange? _customDateRange;
-  DashboardSummary? _summary;
-  List<DashboardTrendPoint> _trend = [];
-  List<Transaksi> _allTransaksi = [];
-  bool _isLoading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadDashboard();
-  }
 
   Future<void> _loadDashboard() async {
     setState(() => _isLoading = true);
@@ -59,9 +47,18 @@ class _SettlementScreenState extends State<SettlementScreen> {
       trendDays = _customDateRange!.duration.inDays + 1;
     }
 
-    final summary = await _transaksiRepo.getDashboardSummary(startDate: startIso, endDate: endIso);
+    final summary = await _transaksiRepo.getDashboardSummary(
+      startDate: startIso, 
+      endDate: endIso,
+      isSettled: _selectedFilter == 'Belum Settlement' ? false : null,
+    );
+    final history = await _transaksiRepo.getAll(
+      limit: 100, 
+      startDate: startIso, 
+      endDate: endIso,
+      isSettled: _selectedFilter == 'Belum Settlement' ? false : null,
+    );
     final trend = await _transaksiRepo.getDashboardTrend(days: trendDays, customStartDate: startIso);
-    final history = await _transaksiRepo.getAll(limit: 100, startDate: startIso, endDate: endIso);
 
     if (!mounted) return;
     setState(() {
@@ -70,6 +67,19 @@ class _SettlementScreenState extends State<SettlementScreen> {
       _allTransaksi = history;
       _isLoading = false;
     });
+  }
+
+  String _selectedFilter = 'Semua'; 
+  DateTimeRange? _customDateRange;
+  DashboardSummary? _summary;
+  List<DashboardTrendPoint> _trend = [];
+  List<Transaksi> _allTransaksi = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDashboard();
   }
 
   void _pilihTanggalCustom() async {
@@ -86,6 +96,415 @@ class _SettlementScreenState extends State<SettlementScreen> {
       });
       _loadDashboard();
     }
+  }
+
+  pw.Widget _receiptRow(String label, String value) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 0.5),
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        children: [
+          pw.Text(label, style: const pw.TextStyle(fontSize: 7)),
+          pw.Text(value, style: const pw.TextStyle(fontSize: 7)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterSection() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _buildFilterChip('Semua'),
+          const SizedBox(width: 8),
+          _buildFilterChip('Hari Ini'),
+          const SizedBox(width: 8),
+          _buildFilterChip('Bulan Ini'),
+          const SizedBox(width: 8),
+          _buildFilterChip('Pilih Tanggal', isCalendar: true),
+          const SizedBox(width: 8),
+          _buildFilterChip('Belum Settlement'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterChip(String label, {bool isCalendar = false}) {
+    final isSelected = _selectedFilter == label;
+    return GestureDetector(
+      onTap: isCalendar ? _pilihTanggalCustom : () {
+        setState(() => _selectedFilter = label);
+        _loadDashboard();
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF173B6D) : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: isSelected ? const Color(0xFF173B6D) : const Color(0xFFE6EBF4)),
+        ),
+        child: Row(
+          children: [
+            if (isCalendar) ...[
+              Icon(Icons.calendar_today, size: 14, color: isSelected ? Colors.white : Colors.grey),
+              const SizedBox(width: 6),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? Colors.white : Colors.black87,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _cetakStrukSettlement() async {
+    try {
+      if (_summary == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Data summary belum tersedia')));
+        return;
+      }
+
+      final summaryData = _summary!;
+      final filterText = _selectedFilter;
+      final historyList = _allTransaksi;
+      
+      // Hitung data ringkasan
+      final Map<String, int> orderTypeSummary = {'Dine In': 0, 'Take Away / Umum': 0};
+      final Map<String, int> paymentMethodSummary = {};
+      final Map<String, Map<String, int>> categorySales = {};
+
+      // Ambil kategori produk (cache)
+      final allProducts = await ProdukRepository().getAll();
+      final Map<String, String> productCategoryMap = {};
+      for (var p in allProducts) {
+        if (p.id != null) productCategoryMap[p.id!] = p.kategori;
+      }
+
+      for (final trx in historyList) {
+        if (trx.jenis == 'pemasukan') {
+          if (trx.noMeja != null && trx.noMeja!.isNotEmpty) {
+            orderTypeSummary['Dine In'] = orderTypeSummary['Dine In']! + 1;
+          } else {
+            orderTypeSummary['Take Away / Umum'] = orderTypeSummary['Take Away / Umum']! + 1;
+          }
+
+          paymentMethodSummary.update(trx.metode, (val) => val + (trx.nominal), ifAbsent: () => trx.nominal);
+
+          for (final item in trx.items) {
+            final cat = productCategoryMap[item.produkId] ?? 'Lainnya';
+            final prodName = item.namaProduk ?? 'Produk';
+            categorySales.putIfAbsent(cat, () => {});
+            categorySales[cat]!.update(prodName, (val) => val + (item.qty), ifAbsent: () => item.qty);
+          }
+        }
+      }
+
+      // Tampilkan Pratinjau Teks
+      if (mounted) {
+        _showTextPreviewDialog(
+          filterText,
+          summaryData,
+          orderTypeSummary,
+          paymentMethodSummary,
+          categorySales,
+        );
+      }
+    } catch (e) {
+      debugPrint("Settlement Error: $e");
+    }
+  }
+
+  void _showTextPreviewDialog(
+    String filterText,
+    DashboardSummary summary,
+    Map<String, int> orderTypeSummary,
+    Map<String, int> paymentMethodSummary,
+    Map<String, Map<String, int>> categorySales,
+  ) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.grey[100],
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        titlePadding: EdgeInsets.zero,
+        title: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.receipt_long_rounded, color: Colors.blue),
+              const SizedBox(width: 12),
+              const Text('Pratinjau Struk', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const Spacer(),
+              IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+            ],
+          ),
+        ),
+        content: Container(
+          width: 350,
+          padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(4),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4)),
+            ],
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  PrinterService().storeName.toUpperCase(),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, fontFamily: 'monospace'),
+                ),
+                const Text('LAPORAN SETTLEMENT', style: TextStyle(fontFamily: 'monospace', fontSize: 12)),
+                const SizedBox(height: 12),
+                const Text('--------------------------------', style: TextStyle(fontFamily: 'monospace', color: Colors.grey)),
+                _uiReceiptRow('PERIODE', filterText),
+                _uiReceiptRow('WAKTU  ', DateTime.now().toString().substring(0, 16)),
+                const Text('--------------------------------', style: TextStyle(fontFamily: 'monospace', color: Colors.grey)),
+                const SizedBox(height: 8),
+                _uiReceiptRow('PENJUALAN', 'Rp ${formatRupiah(summary.totalPenjualan)}'),
+                if (summary.totalDiskon > 0) _uiReceiptRow('DISKON', '-Rp ${formatRupiah(summary.totalDiskon)}'),
+                if (summary.totalPajak > 0) _uiReceiptRow('PAJAK', '+Rp ${formatRupiah(summary.totalPajak)}'),
+                _uiReceiptRow('HPP', 'Rp ${formatRupiah(summary.totalHpp)}'),
+                const SizedBox(height: 4),
+                _uiReceiptRow('LABA BERSIH', 'Rp ${formatRupiah(summary.laba)}', isBold: true),
+                const SizedBox(height: 8),
+                const Text('--------------------------------', style: TextStyle(fontFamily: 'monospace', color: Colors.grey)),
+                const Text('METODE PEMBAYARAN', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, fontFamily: 'monospace')),
+                const SizedBox(height: 4),
+                ...paymentMethodSummary.entries.map((e) => _uiReceiptRow(e.key.toUpperCase(), 'Rp ${formatRupiah(e.value)}')),
+                const Text('--------------------------------', style: TextStyle(fontFamily: 'monospace', color: Colors.grey)),
+                const Text('DETAIL KATEGORI', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, fontFamily: 'monospace')),
+                const SizedBox(height: 4),
+                ...categorySales.entries.map((e) {
+                  int totalQty = e.value.values.fold(0, (sum, q) => sum + q);
+                  return _uiReceiptRow(e.key.toUpperCase(), '$totalQty Item');
+                }),
+                const Text('--------------------------------', style: TextStyle(fontFamily: 'monospace', color: Colors.grey)),
+                const SizedBox(height: 16),
+                const Text('*** TERIMA KASIH ***', style: TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                const Text('Laporan ini valid sebagai bukti', style: TextStyle(fontFamily: 'monospace', fontSize: 10, color: Colors.grey)),
+                const Text('tutup buku harian.', style: TextStyle(fontFamily: 'monospace', fontSize: 10, color: Colors.grey)),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              final ok = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Konfirmasi'),
+                  content: const Text('Simpan data ini sebagai settlement?'),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Batal')),
+                    TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Ya, Simpan')),
+                  ],
+                ),
+              );
+
+              if (ok == true && mounted) {
+                Navigator.pop(context);
+                final List<String> trxIds = _allTransaksi.where((t) => t.id != null).map((t) => t.id!).toList();
+                await _transaksiRepo.markAsSettled(trxIds);
+                _loadDashboard();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Settlement berhasil disimpan!'), backgroundColor: Colors.green),
+                );
+              }
+            },
+            child: const Text('Selesaikan (Tanpa Cetak)', style: TextStyle(color: Colors.orange)),
+          ),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.print, size: 18),
+            onPressed: () async {
+              Navigator.pop(context);
+              final ok = await PrinterService().printSettlementReport(
+                filterText,
+                summary,
+                orderTypeSummary,
+                paymentMethodSummary,
+                categorySales,
+                PrinterService().storeName,
+              );
+              if (ok && mounted) {
+                final List<String> trxIds = _allTransaksi.where((t) => t.id != null).map((t) => t.id!).toList();
+                await _transaksiRepo.markAsSettled(trxIds);
+                _loadDashboard();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Berhasil dicetak!'), backgroundColor: Colors.green),
+                );
+              } else if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Gagal mencetak. Cek printer!'), backgroundColor: Colors.red));
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
+            label: const Text('Cetak Sekarang'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _uiReceiptRow(String label, String value, {bool isBold = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: TextStyle(fontFamily: 'monospace', fontSize: 12, fontWeight: isBold ? FontWeight.bold : FontWeight.normal)),
+          Text(value, style: TextStyle(fontFamily: 'monospace', fontSize: 12, fontWeight: isBold ? FontWeight.bold : FontWeight.normal)),
+        ],
+      ),
+    );
+  }
+
+  Future<pw.Document> _generateSettlementPdf() async {
+    final summaryData = _summary!;
+    final filterText = _selectedFilter;
+    final historyList = _allTransaksi;
+    final produkRepo = ProdukRepository();
+    final allProducts = await produkRepo.getAll();
+    final Map<String, String> productCategoryMap = {};
+    for (var p in allProducts) {
+      if (p.id != null) productCategoryMap[p.id!] = p.kategori;
+    }
+
+    final Map<String, int> orderTypeSummary = {'Dine In': 0, 'Take Away / Umum': 0};
+    final Map<String, int> paymentMethodSummary = {};
+    final Map<String, Map<String, int>> categorySales = {};
+
+    for (final trx in historyList) {
+      if (trx.jenis == 'pemasukan') {
+        // Summary Order Type
+        if (trx.noMeja != null && trx.noMeja!.isNotEmpty) {
+          orderTypeSummary['Dine In'] = orderTypeSummary['Dine In']! + 1;
+        } else {
+          orderTypeSummary['Take Away / Umum'] = orderTypeSummary['Take Away / Umum']! + 1;
+        }
+
+        // Summary Payment Method
+        paymentMethodSummary.update(trx.metode, (val) => val + (trx.nominal as int), ifAbsent: () => trx.nominal as int);
+
+        for (final item in trx.items) {
+          final cat = productCategoryMap[item.produkId] ?? 'Lainnya';
+          final prodName = item.namaProduk ?? 'Produk';
+          
+          categorySales.putIfAbsent(cat, () => {});
+          categorySales[cat]!.update(prodName, (val) => val + (item.qty as int), ifAbsent: () => item.qty as int);
+        }
+      }
+    }
+
+    final pdf = pw.Document();
+    final font = await PdfGoogleFonts.robotoRegular();
+    final fontBold = await PdfGoogleFonts.robotoBold();
+    
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: const PdfPageFormat(58 * PdfPageFormat.mm, 200 * PdfPageFormat.mm, marginAll: 2 * PdfPageFormat.mm),
+        theme: pw.ThemeData.withFont(
+          base: font,
+          bold: fontBold,
+        ),
+        footer: (pw.Context context) => pw.Container(
+          alignment: pw.Alignment.centerRight,
+          margin: const pw.EdgeInsets.only(top: 10),
+          child: pw.Text('Hal ${context.pageNumber}', style: const pw.TextStyle(fontSize: 6)),
+        ),
+        build: (pw.Context context) => [
+          pw.Center(child: pw.Text('SETTLEMENT REPORT', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10))),
+          pw.Center(child: pw.Text('Kasir Pintar POS', style: const pw.TextStyle(fontSize: 8))),
+          pw.SizedBox(height: 4),
+          pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
+          pw.SizedBox(height: 4),
+          
+          _receiptRow('Periode', filterText),
+          _receiptRow('Tgl Cetak', DateTime.now().toString().substring(0, 16)),
+          
+          pw.SizedBox(height: 4),
+          pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
+          pw.SizedBox(height: 4),
+          
+          pw.Center(child: pw.Text('RINGKASAN KEUANGAN', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8))),
+          pw.SizedBox(height: 4),
+          _receiptRow('Penjualan', 'Rp ${formatRupiah(summaryData.totalPenjualan)}'),
+          _receiptRow('HPP', 'Rp ${formatRupiah(summaryData.totalHpp)}'),
+          _receiptRow('Laba', 'Rp ${formatRupiah(summaryData.laba)}'),
+          
+          pw.SizedBox(height: 4),
+          pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
+          pw.SizedBox(height: 4),
+          
+          pw.Center(child: pw.Text('JENIS PEMESANAN', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8))),
+          pw.SizedBox(height: 4),
+          _receiptRow('Dine In', '${orderTypeSummary['Dine In']} Transaksi'),
+          _receiptRow('Take Away', '${orderTypeSummary['Take Away / Umum']} Transaksi'),
+          
+          pw.SizedBox(height: 4),
+          pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
+          pw.SizedBox(height: 4),
+
+          pw.Center(child: pw.Text('METODE PEMBAYARAN', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8))),
+          pw.SizedBox(height: 4),
+          ...paymentMethodSummary.entries.map((e) => _receiptRow(e.key, 'Rp ${formatRupiah(e.value)}')),
+
+          pw.SizedBox(height: 4),
+          pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
+          pw.SizedBox(height: 4),
+          
+          pw.Center(child: pw.Text('DETAIL PENJUALAN PRODUK', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8))),
+          pw.SizedBox(height: 4),
+          
+          ...categorySales.entries.expand((catEntry) {
+            final catName = catEntry.key;
+            final productsMap = catEntry.value;
+            
+            return [
+              pw.Padding(
+                padding: const pw.EdgeInsets.only(top: 4, bottom: 2),
+                child: pw.Text('Kategori: $catName', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8)),
+              ),
+              ...productsMap.entries.map((prodEntry) {
+                return pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text('- ${prodEntry.key}', style: const pw.TextStyle(fontSize: 7)),
+                    pw.Text('${prodEntry.value} terjual', style: const pw.TextStyle(fontSize: 7)),
+                  ],
+                );
+              }),
+            ];
+          }),
+          
+          if (categorySales.isEmpty)
+            pw.Center(child: pw.Text('Tidak ada data penjualan.', style: pw.TextStyle(fontSize: 7, fontStyle: pw.FontStyle.italic))),
+          
+          pw.SizedBox(height: 4),
+          pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
+          pw.SizedBox(height: 8),
+          pw.Center(child: pw.Text('Terima Kasih', style: pw.TextStyle(fontSize: 8, fontStyle: pw.FontStyle.italic))),
+        ],
+      ),
+    );
+    return pdf;
   }
 
   @override
@@ -128,10 +547,7 @@ class _SettlementScreenState extends State<SettlementScreen> {
             _buildHeroCard(summary),
             const SizedBox(height: 16),
             _buildSummaryGrid(summary),
-            const SizedBox(height: 20),
-            _buildChartCard(),
-
-            const SizedBox(height: 32),
+            const SizedBox(height: 16),
             _buildHistorySection(),
             const SizedBox(height: 100), // Extra space for scrolling
           ],
@@ -230,24 +646,24 @@ class _SettlementScreenState extends State<SettlementScreen> {
               ),
           ],
         ),
-        trailing: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.end,
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              'Rp ${formatRupiah(trx.nominal)}',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 15,
-                color: isPemasukan ? Colors.green[700] : Colors.red[700],
-              ),
-            ),
-            Row(
-              mainAxisSize: MainAxisSize.min,
+            Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
+                Text(
+                  'Rp ${formatRupiah(trx.nominal)}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                    color: isPemasukan ? Colors.green[700] : Colors.red[700],
+                  ),
+                ),
                 if (trx.isPrinted)
                   Container(
-                    margin: const EdgeInsets.only(right: 4),
+                    margin: const EdgeInsets.only(top: 2),
                     padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                     decoration: BoxDecoration(
                       color: Colors.blue.withOpacity(0.1),
@@ -258,9 +674,23 @@ class _SettlementScreenState extends State<SettlementScreen> {
                       style: TextStyle(fontSize: 8, color: Colors.blue, fontWeight: FontWeight.bold),
                     ),
                   ),
-                const Icon(Icons.chevron_right, size: 16, color: Colors.grey),
+                if (trx.isSettled)
+                  Container(
+                    margin: const EdgeInsets.only(top: 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text(
+                      'Sudah di Settlement',
+                      style: TextStyle(fontSize: 8, color: Colors.green, fontWeight: FontWeight.bold),
+                    ),
+                  ),
               ],
             ),
+            const SizedBox(width: 4),
+            const Icon(Icons.chevron_right, size: 16, color: Colors.grey),
           ],
         ),
       ),
@@ -499,7 +929,8 @@ class _SettlementScreenState extends State<SettlementScreen> {
                   // PILIH MEJA BUTTON
                   InkWell(
                     onTap: () async {
-                      final usedSeats = await _transaksiRepo.getUsedSeatsToday();
+                      final occupiedMap = await _transaksiRepo.getOccupiedSeatsWithCustomer();
+                      final allMeja = await MejaRepository().getActive();
                       if (!mounted) return;
                       
                       showDialog(
@@ -507,47 +938,133 @@ class _SettlementScreenState extends State<SettlementScreen> {
                         builder: (context) => StatefulBuilder(
                           builder: (context, setInnerState) {
                             return AlertDialog(
-                              title: const Text('Pilih Meja/Kursi'),
+                              backgroundColor: Colors.white,
+                              surfaceTintColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                              title: const Row(
+                                children: [
+                                  Icon(Icons.table_restaurant_rounded, color: Colors.blue),
+                                  SizedBox(width: 12),
+                                  Text('Pilih Meja', style: TextStyle(fontWeight: FontWeight.bold)),
+                                ],
+                              ),
                               content: SizedBox(
-                                width: double.maxFinite,
-                                child: GridView.builder(
-                                  shrinkWrap: true,
-                                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: 5, crossAxisSpacing: 8, mainAxisSpacing: 8,
-                                  ),
-                                  itemCount: 20,
-                                  itemBuilder: (context, index) {
-                                    final no = (index + 1).toString();
-                                    final isSelected = selectedMeja == no;
-                                    final isOccupied = usedSeats.contains(no) && no != trx.noMeja;
+                                width: MediaQuery.of(context).size.width * 0.8,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text('Pilih meja untuk transaksi ini.', style: TextStyle(fontSize: 13, color: Colors.grey)),
+                                    const SizedBox(height: 16),
+                                    Row(
+                                      children: [
+                                        _buildLegendItem(Colors.green[400]!, 'Tersedia'),
+                                        const SizedBox(width: 16),
+                                        _buildLegendItem(Colors.red[400]!, 'Terisi'),
+                                        const SizedBox(width: 16),
+                                        _buildLegendItem(Colors.blue, 'Dipilih'),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 16),
+                                    const Divider(height: 1),
+                                    const SizedBox(height: 16),
+                                    Flexible(
+                                      child: GridView.builder(
+                                        shrinkWrap: true,
+                                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                                          crossAxisCount: 5,
+                                          crossAxisSpacing: 10,
+                                          mainAxisSpacing: 10,
+                                          childAspectRatio: 0.9,
+                                        ),
+                                        itemCount: allMeja.length,
+                                        itemBuilder: (context, index) {
+                                          final meja = allMeja[index];
+                                          final no = meja.id;
+                                          final customerAtTable = occupiedMap[no];
+                                          
+                                          // Meja dianggap occupied jika ada orang lain di sana.
+                                          // Jika orang itu adalah transaksi saat ini, maka tidak dianggap occupied (agar bisa dipilih lagi).
+                                          final isOccupiedByOthers = customerAtTable != null && trx.pelanggan != customerAtTable;
+                                          final isSelected = selectedMeja == no;
 
-                                    return InkWell(
-                                      onTap: isOccupied ? null : () {
-                                        setDialogState(() => selectedMeja = no);
-                                        Navigator.pop(context);
-                                      },
-                                      child: Container(
-                                        decoration: BoxDecoration(
-                                          color: isOccupied ? Colors.green[100] : (isSelected ? Colors.blue : Colors.white),
-                                          border: Border.all(color: isOccupied ? Colors.green : (isSelected ? Colors.blue : Colors.grey[300]!)),
-                                          borderRadius: BorderRadius.circular(8),
-                                        ),
-                                        alignment: Alignment.center,
-                                        child: Column(
-                                          mainAxisAlignment: MainAxisAlignment.center,
-                                          children: [
-                                            Text(no, style: TextStyle(color: isOccupied ? Colors.green[900] : (isSelected ? Colors.white : Colors.black), fontWeight: FontWeight.bold)),
-                                            if (isOccupied) const Text('Isi', style: TextStyle(fontSize: 8, color: Colors.green)),
-                                          ],
-                                        ),
+                                          Color bgColor;
+                                          Color borderColor;
+                                          Color textColor;
+
+                                          if (isSelected) {
+                                            bgColor = Colors.blue;
+                                            borderColor = Colors.blue[700]!;
+                                            textColor = Colors.white;
+                                          } else if (isOccupiedByOthers) {
+                                            bgColor = Colors.red[50]!;
+                                            borderColor = Colors.red[200]!;
+                                            textColor = Colors.red[900]!;
+                                          } else {
+                                            bgColor = Colors.green[50]!;
+                                            borderColor = Colors.green[200]!;
+                                            textColor = Colors.green[900]!;
+                                          }
+
+                                          return InkWell(
+                                            onTap: isOccupiedByOthers ? null : () {
+                                              setDialogState(() => selectedMeja = isSelected ? null : no);
+                                              Navigator.pop(context);
+                                            },
+                                            borderRadius: BorderRadius.circular(12),
+                                            child: AnimatedContainer(
+                                              duration: const Duration(milliseconds: 200),
+                                              decoration: BoxDecoration(
+                                                color: bgColor,
+                                                border: Border.all(color: borderColor, width: isSelected ? 2 : 1),
+                                                borderRadius: BorderRadius.circular(12),
+                                                boxShadow: isSelected ? [BoxShadow(color: Colors.blue.withOpacity(0.3), blurRadius: 8)] : null,
+                                              ),
+                                              child: Column(
+                                                mainAxisAlignment: MainAxisAlignment.center,
+                                                children: [
+                                                  Text(
+                                                    no,
+                                                    style: TextStyle(
+                                                      color: textColor,
+                                                      fontSize: 18,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 2),
+                                                  if (isOccupiedByOthers)
+                                                    Padding(
+                                                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                                                      child: Text(
+                                                        customerAtTable!,
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow.ellipsis,
+                                                        style: TextStyle(fontSize: 9, color: textColor.withOpacity(0.7), fontWeight: FontWeight.w500),
+                                                      ),
+                                                    )
+                                                  else if (isSelected)
+                                                    Text(
+                                                      'Dipilih',
+                                                      style: const TextStyle(fontSize: 9, color: Colors.white70, fontWeight: FontWeight.w500),
+                                                    )
+                                                  else
+                                                    Text(
+                                                      'Kosong',
+                                                      style: TextStyle(fontSize: 9, color: textColor.withOpacity(0.5)),
+                                                    ),
+                                                ],
+                                              ),
+                                            ),
+                                          );
+                                        },
                                       ),
-                                    );
-                                  },
+                                    ),
+                                  ],
                                 ),
                               ),
                               actions: [
-                                TextButton(onPressed: () { setDialogState(() => selectedMeja = null); Navigator.pop(context); }, child: const Text('Hapus')),
-                                TextButton(onPressed: () => Navigator.pop(context), child: const Text('Tutup')),
+                                TextButton(onPressed: () { setDialogState(() => selectedMeja = null); Navigator.pop(context); }, child: const Text('Hapus', style: TextStyle(color: Colors.red))),
+                                TextButton(onPressed: () => Navigator.pop(context), child: const Text('Tutup', style: TextStyle(color: Colors.grey))),
                               ],
                             );
                           }
@@ -686,6 +1203,8 @@ class _SettlementScreenState extends State<SettlementScreen> {
                     diskonInfo: newDiskonInfo,
                     pajakInfo: newPajakInfo,
                     noMeja: selectedMeja,
+                    status: trx.status,
+                    isPrinted: trx.isPrinted,
                     items: trx.items,
                   );
                   
@@ -819,7 +1338,21 @@ class _SettlementScreenState extends State<SettlementScreen> {
           );
         }
 
-        if (constraints.maxWidth >= 560) {
+        if (constraints.maxWidth < 320) {
+          return Column(
+            children: [
+              cards[0],
+              const SizedBox(height: 12),
+              cards[1],
+              const SizedBox(height: 12),
+              cards[2],
+              const SizedBox(height: 12),
+              cards[3],
+            ],
+          );
+        }
+
+        if (constraints.maxWidth < 900) {
           return Column(
             children: [
               Row(
@@ -841,17 +1374,7 @@ class _SettlementScreenState extends State<SettlementScreen> {
           );
         }
 
-        return Column(
-          children: [
-            cards[0],
-            const SizedBox(height: 12),
-            cards[1],
-            const SizedBox(height: 12),
-            cards[2],
-            const SizedBox(height: 12),
-            cards[3],
-          ],
-        );
+        return const SizedBox.shrink();
       },
     );
   }
@@ -863,254 +1386,105 @@ class _SettlementScreenState extends State<SettlementScreen> {
     required IconData icon,
     required Color accent,
   }) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color(0xFFE6EBF4)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.03),
-            blurRadius: 14,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(11),
-            decoration: BoxDecoration(
-              color: accent.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(icon, color: accent),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            subtitle,
-            style: TextStyle(
-              color: Colors.grey[600],
-              fontSize: 12,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildChartCard() {
-    final maxY = _chartMaxY();
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFE6EBF4)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Grafik 7 Hari Terakhir',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Membandingkan total penjualan dan laba harian.',
-            style: TextStyle(
-              color: Colors.grey[600],
-            ),
-          ),
-          const SizedBox(height: 24),
-          SizedBox(
-            height: 280,
-            child: LineChart(
-              LineChartData(
-                minY: 0,
-                maxY: maxY,
-                gridData: FlGridData(
-                  show: true,
-                  drawVerticalLine: false,
-                  horizontalInterval: maxY <= 0 ? 1 : maxY / 4,
-                  getDrawingHorizontalLine: (value) => const FlLine(
-                    color: Color(0xFFEAEFF7),
-                    strokeWidth: 1,
-                  ),
-                ),
-                borderData: FlBorderData(show: false),
-                titlesData: FlTitlesData(
-                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  leftTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 48,
-                      getTitlesWidget: (value, meta) {
-                        return Text(
-                          _compactCurrency(value),
-                          style: const TextStyle(fontSize: 11, color: Colors.grey),
-                        );
-                      },
-                    ),
-                  ),
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 32,
-                      getTitlesWidget: (value, meta) {
-                        final index = value.toInt();
-                        if (index < 0 || index >= _trend.length) {
-                          return const SizedBox.shrink();
-                        }
-                        final date = _trend[index].tanggal;
-                        return Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: Text(
-                            '${date.day}/${date.month}',
-                            style: const TextStyle(fontSize: 11, color: Colors.grey),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-                lineTouchData: LineTouchData(
-                  touchTooltipData: LineTouchTooltipData(
-                    tooltipRoundedRadius: 16,
-                    getTooltipColor: (_) => const Color(0xFF1F2A44),
-                    getTooltipItems: (touchedSpots) {
-                      return touchedSpots.map((spot) {
-                        final point = _trend[spot.x.toInt()];
-                        final label = spot.barIndex == 0 ? 'Penjualan' : 'Laba';
-                        final amount = spot.barIndex == 0
-                            ? point.totalPenjualan
-                            : point.laba;
-                        return LineTooltipItem(
-                          '$label\nRp ${formatRupiah(amount)}',
-                          const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        );
-                      }).toList();
-                    },
-                  ),
-                ),
-                lineBarsData: [
-                  LineChartBarData(
-                    spots: List.generate(
-                      _trend.length,
-                      (index) => FlSpot(index.toDouble(), _trend[index].totalPenjualan.toDouble()),
-                    ),
-                    isCurved: true,
-                    barWidth: 4,
-                    color: const Color(0xFF0C9B63),
-                    dotData: const FlDotData(show: false),
-                    belowBarData: BarAreaData(
-                      show: true,
-                      color: const Color(0x220C9B63),
-                    ),
-                  ),
-                  LineChartBarData(
-                    spots: List.generate(
-                      _trend.length,
-                      (index) => FlSpot(index.toDouble(), _trend[index].laba.toDouble()),
-                    ),
-                    isCurved: true,
-                    barWidth: 4,
-                    color: const Color(0xFF3C64F4),
-                    dotData: const FlDotData(show: false),
-                    belowBarData: BarAreaData(
-                      show: true,
-                      color: const Color(0x223C64F4),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 16,
-            runSpacing: 12,
-            children: const [
-              _ChartLegend(
-                color: Color(0xFF0C9B63),
-                label: 'Penjualan',
-              ),
-              _ChartLegend(
-                color: Color(0xFF3C64F4),
-                label: 'Laba',
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isCompact = constraints.maxWidth < 190;
+        return Container(
+          width: double.infinity,
+          padding: EdgeInsets.all(isCompact ? 14 : 18),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: const Color(0xFFE6EBF4)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.03),
+                blurRadius: 14,
+                offset: const Offset(0, 8),
               ),
             ],
           ),
-        ],
-      ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: EdgeInsets.all(isCompact ? 9 : 11),
+                decoration: BoxDecoration(
+                  color: accent.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: accent, size: isCompact ? 22 : 24),
+              ),
+              SizedBox(height: isCompact ? 14 : 16),
+              Text(
+                title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: isCompact ? 13 : 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: isCompact ? 20 : 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                subtitle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.grey[600],
+                  fontSize: isCompact ? 11 : 12,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
 
-
-  double _chartMaxY() {
-    var maxValue = 0;
-    for (final item in _trend) {
-      if (item.totalPenjualan > maxValue) {
-        maxValue = item.totalPenjualan;
-      }
-      if (item.laba > maxValue) {
-        maxValue = item.laba;
-      }
-    }
-
-    if (maxValue <= 0) return 10;
-    return maxValue * 1.2;
-  }
-
-  String _compactCurrency(double value) {
-    if (value >= 1000000) {
-      return '${(value / 1000000).toStringAsFixed(1)}jt';
-    }
-    if (value >= 1000) {
-      return '${(value / 1000).toStringAsFixed(0)}rb';
-    }
-    return value.toStringAsFixed(0);
-  }
-
   Future<void> _printStruk(Transaksi trx) async {
-    if (trx.isPrinted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Struk ini sudah pernah dicetak sebelumnya!'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
+    // Tampilkan loading snackbar
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Menyiapkan pencetakan...'), duration: Duration(seconds: 1)),
+    );
 
-    final pdf = await PrinterService().generateReceiptPdf(trx, PrinterService().storeName);
-    _showPreviewDialog(pdf, 'Struk_${trx.id}', trx.id);
+    final ok = await PrinterService().printReceipt(trx, PrinterService().storeName);
+    
+    if (ok && trx.id != null) {
+      await TransaksiRepository().updatePrintedStatus(trx.id!, true);
+      _loadDashboard(); // Refresh untuk update badge "Sudah Dicetak"
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Struk berhasil dicetak'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } else if (!ok) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Gagal mencetak struk. Pastikan printer terhubung.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   void _showPreviewDialog(pw.Document pdf, String fileName, [String? trxId]) {
@@ -1155,7 +1529,7 @@ class _SettlementScreenState extends State<SettlementScreen> {
                     canChangePageFormat: false,
                     canChangeOrientation: false,
                     canDebug: false,
-                    initialPageFormat: const PdfPageFormat(58 * PdfPageFormat.mm, double.infinity),
+                    initialPageFormat: const PdfPageFormat(58 * PdfPageFormat.mm, 200 * PdfPageFormat.mm),
                     pdfFileName: '$fileName.pdf',
                     actions: [
                       PdfPreviewAction(
@@ -1164,7 +1538,7 @@ class _SettlementScreenState extends State<SettlementScreen> {
                           final ok = await PrinterService().printPdfDocument(pdf, fileName);
                           if (ok && trxId != null) {
                             await TransaksiRepository().updatePrintedStatus(trxId, true);
-                            _loadDashboard(); // Refresh list to update icons/status
+                            await _loadDashboard(); // Refresh list to update icons/status
                           }
                         },
                       ),
@@ -1182,7 +1556,7 @@ class _SettlementScreenState extends State<SettlementScreen> {
                     if (ok) {
                       if (trxId != null) {
                         await TransaksiRepository().updatePrintedStatus(trxId, true);
-                        _loadDashboard();
+                        await _loadDashboard();
                       }
                       if (context.mounted) Navigator.pop(context);
                       
@@ -1207,229 +1581,17 @@ class _SettlementScreenState extends State<SettlementScreen> {
     );
   }
 
-  pw.Widget _receiptRow(String label, String value) {
-    return pw.Padding(
-      padding: const pw.EdgeInsets.symmetric(vertical: 0.5),
-      child: pw.Row(
-        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-        children: [
-          pw.Text(label, style: const pw.TextStyle(fontSize: 7)),
-          pw.Text(value, style: const pw.TextStyle(fontSize: 7)),
-        ],
-      ),
-    );
-  }
-  Widget _buildFilterSection() {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          _buildFilterChip('Semua'),
-          const SizedBox(width: 8),
-          _buildFilterChip('Hari Ini'),
-          const SizedBox(width: 8),
-          _buildFilterChip('Bulan Ini'),
-          const SizedBox(width: 8),
-          _buildFilterChip('Pilih Tanggal', isCalendar: true),
-        ],
-      ),
-    );
-  }
 
-  Widget _buildFilterChip(String label, {bool isCalendar = false}) {
-    final isSelected = _selectedFilter == label;
-    return GestureDetector(
-      onTap: isCalendar ? _pilihTanggalCustom : () {
-        setState(() => _selectedFilter = label);
-        _loadDashboard();
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF173B6D) : Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: isSelected ? const Color(0xFF173B6D) : const Color(0xFFE6EBF4)),
-        ),
-        child: Row(
-          children: [
-            if (isCalendar) ...[
-              Icon(Icons.calendar_today, size: 14, color: isSelected ? Colors.white : Colors.grey),
-              const SizedBox(width: 6),
-            ],
-            Text(
-              label,
-              style: TextStyle(
-                color: isSelected ? Colors.white : Colors.black87,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                fontSize: 13,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _cetakStrukSettlement() async {
-    final pdf = await _generateSettlementPdf();
-    _showPreviewDialog(pdf, 'Settlement_Report_${DateTime.now().millisecondsSinceEpoch}');
-  }
-
-  Future<pw.Document> _generateSettlementPdf() async {
-    final produkRepo = ProdukRepository();
-    final allProducts = await produkRepo.getAll();
-    final Map<String, String> productCategoryMap = {};
-    for (var p in allProducts) {
-      if (p.id != null) productCategoryMap[p.id!] = p.kategori;
-    }
-
-    final Map<String, int> orderTypeSummary = {'Dine In': 0, 'Take Away / Umum': 0};
-    final Map<String, int> paymentMethodSummary = {};
-    final Map<String, Map<String, int>> categorySales = {};
-
-    for (final trx in _allTransaksi) {
-      if (trx.jenis == 'pemasukan') {
-        // Summary Order Type
-        if (trx.noMeja != null && trx.noMeja!.isNotEmpty) {
-          orderTypeSummary['Dine In'] = orderTypeSummary['Dine In']! + 1;
-        } else {
-          orderTypeSummary['Take Away / Umum'] = orderTypeSummary['Take Away / Umum']! + 1;
-        }
-
-        // Summary Payment Method
-        paymentMethodSummary.update(trx.metode, (val) => val + trx.nominal, ifAbsent: () => trx.nominal);
-
-        for (final item in trx.items) {
-          final cat = productCategoryMap[item.produkId] ?? 'Lainnya';
-          final prodName = item.namaProduk ?? 'Produk';
-          
-          categorySales.putIfAbsent(cat, () => {});
-          categorySales[cat]!.update(prodName, (val) => val + item.qty, ifAbsent: () => item.qty);
-        }
-      }
-    }
-
-    final pdf = pw.Document();
-    final summary = _summary!;
-    
-    pdf.addPage(
-      pw.Page(
-        pageFormat: const PdfPageFormat(58 * PdfPageFormat.mm, double.infinity, marginAll: 2 * PdfPageFormat.mm),
-        build: (pw.Context context) {
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.center,
-            children: [
-              pw.Text('SETTLEMENT REPORT', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-              pw.SizedBox(height: 2),
-              pw.Text('Kasir Pintar POS', style: const pw.TextStyle(fontSize: 8)),
-              pw.SizedBox(height: 4),
-              pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
-              pw.SizedBox(height: 4),
-              
-              _receiptRow('Periode', _selectedFilter),
-              _receiptRow('Tgl Cetak', DateTime.now().toString().substring(0, 16)),
-              
-              pw.SizedBox(height: 4),
-              pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
-              pw.SizedBox(height: 4),
-              
-              pw.Text('RINGKASAN KEUANGAN', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8)),
-              pw.SizedBox(height: 4),
-              _receiptRow('Penjualan', 'Rp ${formatRupiah(summary.totalPenjualan)}'),
-              _receiptRow('HPP', 'Rp ${formatRupiah(summary.totalHpp)}'),
-              _receiptRow('Laba', 'Rp ${formatRupiah(summary.laba)}'),
-              
-              pw.SizedBox(height: 4),
-              pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
-              pw.SizedBox(height: 4),
-              
-              pw.Text('JENIS PEMESANAN', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8)),
-              pw.SizedBox(height: 4),
-              _receiptRow('Dine In', '${orderTypeSummary['Dine In']} Transaksi'),
-              _receiptRow('Take Away', '${orderTypeSummary['Take Away / Umum']} Transaksi'),
-              
-              pw.SizedBox(height: 4),
-              pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
-              pw.SizedBox(height: 4),
-
-              pw.Text('METODE PEMBAYARAN', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8)),
-              pw.SizedBox(height: 4),
-              ...paymentMethodSummary.entries.map((e) => _receiptRow(e.key, 'Rp ${formatRupiah(e.value)}')).toList(),
-
-              pw.SizedBox(height: 4),
-              pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
-              pw.SizedBox(height: 4),
-              
-              pw.Text('DETAIL PENJUALAN PRODUK', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8)),
-              pw.SizedBox(height: 4),
-              
-              ...categorySales.entries.map((catEntry) {
-                final catName = catEntry.key;
-                final productsMap = catEntry.value;
-                
-                return pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                    pw.Text('Kategori: $catName', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 8)),
-                    pw.SizedBox(height: 2),
-                    ...productsMap.entries.map((prodEntry) {
-                      return pw.Row(
-                        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                        children: [
-                          pw.Text('- ${prodEntry.key}', style: const pw.TextStyle(fontSize: 7)),
-                          pw.Text('${prodEntry.value} terjual', style: const pw.TextStyle(fontSize: 7)),
-                        ],
-                      );
-                    }).toList(),
-                    pw.SizedBox(height: 4),
-                  ]
-                );
-              }).toList(),
-              
-              if (categorySales.isEmpty)
-                pw.Text('Tidak ada data penjualan.', style: pw.TextStyle(fontSize: 7, fontStyle: pw.FontStyle.italic)),
-              
-              pw.SizedBox(height: 4),
-              pw.Divider(thickness: 0.5, borderStyle: pw.BorderStyle.dashed),
-              pw.SizedBox(height: 8),
-              pw.Text('Terima Kasih', style: pw.TextStyle(fontSize: 8, fontStyle: pw.FontStyle.italic)),
-            ],
-          );
-        },
-      ),
-    );
-    return pdf;
-  }
-}
-
-
-class _ChartLegend extends StatelessWidget {
-  final Color color;
-  final String label;
-
-  const _ChartLegend({
-    required this.color,
-    required this.label,
-  });
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildLegendItem(Color color, String label) {
     return Row(
-      mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           width: 12,
           height: 12,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(99),
-          ),
+          decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(3)),
         ),
-        const SizedBox(width: 8),
-        Text(
-          label,
-          style: TextStyle(color: Colors.grey[700]),
-        ),
+        const SizedBox(width: 6),
+        Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
       ],
     );
   }

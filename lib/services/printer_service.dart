@@ -8,6 +8,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/transaksi_model.dart';
+import '../database/transaksi_repository.dart';
 import '../utils/formatters.dart';
 
 class PrinterService {
@@ -335,9 +336,18 @@ class PrinterService {
 
   Future<pw.Document> generateReceiptPdf(Transaksi transaksi, String storeName) async {
     final doc = pw.Document();
+    
+    // Muat font yang mendukung Unicode (Roboto)
+    final font = await PdfGoogleFonts.robotoRegular();
+    final fontBold = await PdfGoogleFonts.robotoBold();
+    
     doc.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.roll80,
+        theme: pw.ThemeData.withFont(
+          base: font,
+          bold: fontBold,
+        ),
         build: (pw.Context context) {
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -416,6 +426,130 @@ class PrinterService {
       }
       return true;
     } catch (e) {
+      return false;
+    }
+  }
+
+  Future<bool> printSettlementReport(
+    String filterText,
+    DashboardSummary summary,
+    Map<String, int> orderTypeSummary,
+    Map<String, int> paymentMethodSummary,
+    Map<String, Map<String, int>> categorySales,
+    String storeName,
+  ) async {
+    if (_isAndroid) {
+      final bool currentlyConnected = await PrintBluetoothThermal.connectionStatus;
+      _isConnected = currentlyConnected;
+    }
+
+    if (_isAndroid && _isConnected) {
+      _addLog("Menggunakan mode ESC/POS Settlement...");
+      return await _printSettlementEscPos(
+        filterText,
+        summary,
+        orderTypeSummary,
+        paymentMethodSummary,
+        categorySales,
+        storeName,
+      );
+    }
+
+    _addLog("Mode ESC/POS tidak tersedia atau printer tidak terhubung.");
+    return false;
+  }
+
+  Future<bool> _printSettlementEscPos(
+    String filterText,
+    DashboardSummary summary,
+    Map<String, int> orderTypeSummary,
+    Map<String, int> paymentMethodSummary,
+    Map<String, Map<String, int>> categorySales,
+    String storeName,
+  ) async {
+    try {
+      List<int> bytes = [];
+      CapabilityProfile profile = await CapabilityProfile.load();
+      final generator = Generator(PaperSize.mm58, profile);
+
+      // Header
+      bytes += generator.setStyles(const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2));
+      bytes += generator.text("LAPORAN");
+      bytes += generator.text("SETTLEMENT");
+      bytes += generator.setStyles(const PosStyles(align: PosAlign.center, bold: false));
+      bytes += generator.text(storeName);
+      bytes += generator.hr();
+
+      // Info
+      bytes += generator.text("Periode: $filterText", styles: const PosStyles(align: PosAlign.left));
+      bytes += generator.text("Waktu: ${DateTime.now().toString().substring(0, 16)}", styles: const PosStyles(align: PosAlign.left));
+      bytes += generator.hr();
+
+      // Ringkasan Keuangan
+      bytes += generator.setStyles(const PosStyles(bold: true));
+      bytes += generator.text("RINGKASAN KEUANGAN");
+      bytes += generator.setStyles(const PosStyles(bold: false));
+      bytes += generator.row([
+        PosColumn(text: "Penjualan", width: 6),
+        PosColumn(text: formatRupiah(summary.totalPenjualan), width: 6, styles: const PosStyles(align: PosAlign.right)),
+      ]);
+      if (summary.totalDiskon > 0) {
+        bytes += generator.row([
+          PosColumn(text: "Total Diskon", width: 6),
+          PosColumn(text: "-${formatRupiah(summary.totalDiskon)}", width: 6, styles: const PosStyles(align: PosAlign.right)),
+        ]);
+      }
+      if (summary.totalPajak > 0) {
+        bytes += generator.row([
+          PosColumn(text: "Pajak", width: 6),
+          PosColumn(text: "+${formatRupiah(summary.totalPajak)}", width: 6, styles: const PosStyles(align: PosAlign.right)),
+        ]);
+      }
+      bytes += generator.row([
+        PosColumn(text: "HPP", width: 6),
+        PosColumn(text: formatRupiah(summary.totalHpp), width: 6, styles: const PosStyles(align: PosAlign.right)),
+      ]);
+      bytes += generator.row([
+        PosColumn(text: "Laba Bersih", width: 6, styles: const PosStyles(bold: true)),
+        PosColumn(text: formatRupiah(summary.laba), width: 6, styles: const PosStyles(align: PosAlign.right, bold: true)),
+      ]);
+      bytes += generator.hr();
+
+      // Metode Pembayaran
+      bytes += generator.setStyles(const PosStyles(bold: true));
+      bytes += generator.text("METODE PEMBAYARAN");
+      bytes += generator.setStyles(const PosStyles(bold: false));
+      for (var entry in paymentMethodSummary.entries) {
+        bytes += generator.row([
+          PosColumn(text: entry.key, width: 6),
+          PosColumn(text: formatRupiah(entry.value), width: 6, styles: const PosStyles(align: PosAlign.right)),
+        ]);
+      }
+      bytes += generator.hr();
+
+      // Detail Per Kategori
+      bytes += generator.setStyles(const PosStyles(bold: true));
+      bytes += generator.text("DETAIL PRODUK");
+      bytes += generator.setStyles(const PosStyles(bold: false));
+      for (var catEntry in categorySales.entries) {
+        bytes += generator.text("> ${catEntry.key}", styles: const PosStyles(bold: true));
+        for (var prodEntry in catEntry.value.entries) {
+          bytes += generator.row([
+            PosColumn(text: " ${prodEntry.key}", width: 9),
+            PosColumn(text: "${prodEntry.value}", width: 3, styles: const PosStyles(align: PosAlign.right)),
+          ]);
+        }
+      }
+
+      bytes += generator.hr();
+      bytes += generator.setStyles(const PosStyles(align: PosAlign.center));
+      bytes += generator.text("Laporan Selesai");
+      bytes += generator.feed(3);
+      bytes += generator.cut();
+
+      return await PrintBluetoothThermal.writeBytes(bytes);
+    } catch (e) {
+      _addLog("Error ESC/POS Settlement: $e");
       return false;
     }
   }

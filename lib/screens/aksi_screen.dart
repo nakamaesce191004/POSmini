@@ -4,11 +4,12 @@ import 'uang_screen.dart';
 import 'tambah_metode_pembayaran_screen.dart';
 import 'metode_pembayaran_screen.dart';
 import 'data_manajemen_screen.dart';
-import 'riwayat_presensi_screen.dart';
+import 'manajemen_presensi_screen.dart';
 import 'printer_settings_screen.dart';
-import 'ganti_pin_screen.dart';
+import 'printer_settings_screen.dart';
 import 'kalkulator_hpp_screen.dart';
 import 'bahan_baku_screen.dart';
+import 'meja_screen.dart';
 import '../database/resep_repository.dart';
 import '../models/resep_model.dart';
 
@@ -179,6 +180,23 @@ class _AksiScreenState extends State<AksiScreen> {
                   },
                 ),
                 const Divider(height: 1, indent: 64),
+                _buildMenuItem(
+                  context: context,
+                  icon: Icons.table_restaurant,
+                  iconColor: Colors.teal[400]!,
+                  iconBgColor: Colors.teal[50]!,
+                  title: 'Manajemen Meja',
+                  subtitle: 'Kelola nomor meja & status aktif',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const MejaScreen(),
+                      ),
+                    );
+                  },
+                ),
+                const Divider(height: 1, indent: 64),
               ],
             ),
           ),
@@ -234,30 +252,13 @@ class _AksiScreenState extends State<AksiScreen> {
                   icon: Icons.assignment_turned_in_outlined,
                   iconColor: Colors.teal[400]!,
                   iconBgColor: Colors.teal[50]!,
-                  title: 'Riwayat Presensi',
-                  subtitle: 'Lihat catatan kehadiran karyawan',
+                  title: 'Manajemen Presensi',
+                  subtitle: 'Kelola data karyawan & riwayat kehadiran',
                   onTap: () {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => const RiwayatPresensiScreen(),
-                      ),
-                    );
-                  },
-                ),
-                const Divider(height: 1, indent: 64),
-                _buildMenuItem(
-                  context: context,
-                  icon: Icons.security,
-                  iconColor: Colors.orange[800]!,
-                  iconBgColor: Colors.orange[50]!,
-                  title: 'Ganti PIN Keamanan',
-                  subtitle: 'Ubah kode akses Menu Aksi',
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const GantiPinScreen(),
+                        builder: (context) => const ManajemenPresensiScreen(),
                       ),
                     );
                   },

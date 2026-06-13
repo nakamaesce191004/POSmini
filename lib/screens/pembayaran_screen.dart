@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import '../database/transaksi_repository.dart';
 import '../database/metode_repository.dart';
 import '../database/produk_repository.dart';
+import '../database/meja_repository.dart';
 import '../models/transaksi_model.dart';
 import '../models/produk_model.dart';
 import '../models/metode_pembayaran_model.dart';
+import '../models/meja_model.dart';
 import '../utils/formatters.dart';
 import '../widgets/app_image_view.dart';
 import '../services/printer_service.dart';
@@ -17,6 +19,7 @@ class PembayaranScreen extends StatefulWidget {
   final int pajak;
   final String? diskonInfo;
   final String? pajakInfo;
+  final String? initialMeja;
   final Transaksi? existingTrx;
 
   const PembayaranScreen({
@@ -27,6 +30,7 @@ class PembayaranScreen extends StatefulWidget {
     required this.pajak,
     this.diskonInfo,
     this.pajakInfo,
+    this.initialMeja,
     this.existingTrx,
   });
 
@@ -47,13 +51,14 @@ class _PembayaranScreenState extends State<PembayaranScreen> {
   
   List<MetodePembayaran> _allMetode = [];
   String? _selectedMeja;
+  String? _tempMejaSelection;
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     _namaPelangganController = TextEditingController(text: widget.existingTrx?.pelanggan ?? '');
-    _selectedMeja = widget.existingTrx?.noMeja;
+    _selectedMeja = widget.existingTrx?.noMeja ?? widget.initialMeja;
     _bayarController.addListener(_hitungKembalian);
     _loadData();
   }
@@ -759,140 +764,218 @@ class _PembayaranScreenState extends State<PembayaranScreen> {
     );
   }
 
-  void _showMejaDialog() async {
-    final usedSeats = await _transaksiRepo.getUsedSeatsToday();
-    if (!mounted) return;
-
-    String? tempSelected = _selectedMeja;
-
+  void _showMejaDialog() {
     showDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
+      builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) {
-          return AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: const Text('Pilih Nomor Meja/Kursi'),
-            content: SizedBox(
-              width: double.maxFinite,
-              child: GridView.builder(
-                shrinkWrap: true,
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 5,
-                  crossAxisSpacing: 8,
-                  mainAxisSpacing: 8,
-                ),
-                itemCount: 20,
-                itemBuilder: (context, index) {
-                  final no = (index + 1).toString();
-                  final isSelected = tempSelected == no;
-                  final isOccupied = usedSeats.contains(no);
+          return FutureBuilder<Map<String, dynamic>>(
+            future: Future.wait([
+              _transaksiRepo.getOccupiedSeatsWithCustomer(),
+              MejaRepository().getActive(),
+            ]).then((values) => {
+              'occupiedMap': values[0] as Map<String, String>,
+              'allMeja': values[1] as List<Meja>,
+            }),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const AlertDialog(content: SizedBox(height: 100, child: Center(child: CircularProgressIndicator())));
+              }
 
-                  return InkWell(
-                    onTap: isOccupied ? null : () {
-                      setDialogState(() => tempSelected = no);
-                    },
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: isOccupied ? Colors.green[100] : (isSelected ? Colors.blue : Colors.white),
-                        border: Border.all(
-                          color: isOccupied ? Colors.green : (isSelected ? Colors.blue : Colors.grey[300]!)
-                        ),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      alignment: Alignment.center,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+              final occupiedMap = snapshot.data?['occupiedMap'] as Map<String, String>? ?? {};
+              final allMeja = snapshot.data?['allMeja'] as List<Meja>? ?? [];
+              
+              final isCurrentSelectedOccupied = _tempMejaSelection != null && occupiedMap.containsKey(_tempMejaSelection);
+
+              return AlertDialog(
+                backgroundColor: Colors.white,
+                surfaceTintColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                title: const Row(
+                  children: [
+                    Icon(Icons.table_restaurant_rounded, color: Colors.blue),
+                    SizedBox(width: 12),
+                    Text('Pilih Meja', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                content: SizedBox(
+                  width: MediaQuery.of(context).size.width * 0.8,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Pilih meja untuk pesanan ini.', style: TextStyle(fontSize: 13, color: Colors.grey)),
+                      const SizedBox(height: 16),
+                      Row(
                         children: [
-                          Text(
-                            no,
-                            style: TextStyle(
-                              color: isOccupied ? Colors.green[900] : (isSelected ? Colors.white : Colors.black),
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          if (isOccupied)
-                            const Text('Isi', style: TextStyle(fontSize: 8, color: Colors.green)),
+                          _buildLegendItem(Colors.green[400]!, 'Tersedia'),
+                          const SizedBox(width: 16),
+                          _buildLegendItem(Colors.red[400]!, 'Terisi'),
+                          const SizedBox(width: 16),
+                          _buildLegendItem(Colors.blue, 'Dipilih'),
                         ],
                       ),
-                    ),
-                  );
-                },
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () async {
-                  // Munculkan pilihan meja mana yang mau dihapus (dikosongkan)
-                  final toDelete = await showDialog<String>(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      title: const Text('Pilih Meja untuk Dikosongkan'),
-                      content: SizedBox(
-                        width: double.maxFinite,
+                      const SizedBox(height: 16),
+                      const Divider(height: 1),
+                      const SizedBox(height: 16),
+                      Flexible(
                         child: GridView.builder(
                           shrinkWrap: true,
                           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 5, crossAxisSpacing: 8, mainAxisSpacing: 8,
+                            crossAxisCount: 5,
+                            crossAxisSpacing: 10,
+                            mainAxisSpacing: 10,
+                            childAspectRatio: 0.9,
                           ),
-                          itemCount: 20,
+                          itemCount: allMeja.length,
                           itemBuilder: (context, index) {
-                            final no = (index + 1).toString();
-                            final isOcc = usedSeats.contains(no);
+                            final meja = allMeja[index];
+                            final no = meja.id;
+                            final customerAtTable = occupiedMap[no];
+                            
+                            final isOccupied = customerAtTable != null;
+                            final isSelected = _tempMejaSelection == no;
+
+                            Color bgColor;
+                            Color borderColor;
+                            Color textColor;
+
+                            if (isSelected) {
+                              bgColor = Colors.blue;
+                              borderColor = Colors.blue[700]!;
+                              textColor = Colors.white;
+                            } else if (isOccupied) {
+                              bgColor = Colors.red[50]!;
+                              borderColor = Colors.red[200]!;
+                              textColor = Colors.red[900]!;
+                            } else {
+                              bgColor = Colors.green[50]!;
+                              borderColor = Colors.green[200]!;
+                              textColor = Colors.green[900]!;
+                            }
+
                             return InkWell(
-                              onTap: !isOcc ? null : () => Navigator.pop(context, no),
-                              child: Container(
+                              onTap: () {
+                                setDialogState(() => _tempMejaSelection = isSelected ? null : no);
+                              },
+                              borderRadius: BorderRadius.circular(12),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
                                 decoration: BoxDecoration(
-                                  color: isOcc ? Colors.green[100] : Colors.grey[50],
-                                  border: Border.all(color: isOcc ? Colors.green : Colors.grey[200]!),
-                                  borderRadius: BorderRadius.circular(8),
+                                  color: bgColor,
+                                  border: Border.all(color: borderColor, width: isSelected ? 2 : 1),
+                                  borderRadius: BorderRadius.circular(12),
+                                  boxShadow: isSelected ? [BoxShadow(color: Colors.blue.withOpacity(0.3), blurRadius: 8)] : null,
                                 ),
-                                alignment: Alignment.center,
-                                child: Text(no, style: TextStyle(color: isOcc ? Colors.green[900] : Colors.grey)),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      no,
+                                      style: TextStyle(
+                                        color: textColor,
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                     if (isOccupied && !isSelected)
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                                        child: Text(
+                                          customerAtTable!,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(fontSize: 9, color: textColor.withOpacity(0.7), fontWeight: FontWeight.w500),
+                                        ),
+                                      )
+                                    else if (isSelected)
+                                      Text(
+                                        isOccupied ? customerAtTable! : 'Dipilih',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(fontSize: 8, color: Colors.white70, fontWeight: FontWeight.w500),
+                                      )
+                                    else
+                                      Text(
+                                        'Kosong',
+                                        style: TextStyle(fontSize: 9, color: textColor.withOpacity(0.5)),
+                                      ),
+                                  ],
+                                ),
                               ),
                             );
                           },
                         ),
                       ),
-                    ),
-                  );
-
-                  if (toDelete != null) {
-                    await _transaksiRepo.clearSeat(toDelete);
-                    // Refresh dialog state
-                    final newUsed = await _transaksiRepo.getUsedSeatsToday();
-                    setDialogState(() {
-                      usedSeats.clear();
-                      usedSeats.addAll(newUsed);
-                    });
-                  }
-                },
-                child: const Text('Kosongkan Meja Terisi', style: TextStyle(color: Colors.green)),
-              ),
-              const Spacer(),
-              TextButton(
-                onPressed: () {
-                  setState(() => _selectedMeja = null);
-                  Navigator.pop(context);
-                },
-                child: const Text('Hapus Pilihan', style: TextStyle(color: Colors.red)),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blue,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ],
+                  ),
                 ),
-                onPressed: () {
-                  setState(() => _selectedMeja = tempSelected);
-                  Navigator.pop(context);
-                },
-                child: const Text('Pilih Meja (OK)'),
-              ),
-            ],
-            actionsAlignment: MainAxisAlignment.spaceBetween,
+                actions: [
+                  if (isCurrentSelectedOccupied)
+                    TextButton(
+                      onPressed: () async {
+                        final target = _tempMejaSelection!;
+                        await _transaksiRepo.clearSeat(target);
+                        setDialogState(() {
+                          _tempMejaSelection = null;
+                        });
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Meja $target telah dikosongkan'),
+                              duration: const Duration(seconds: 1),
+                              behavior: SnackBarBehavior.floating,
+                              backgroundColor: Colors.green[700],
+                            ),
+                          );
+                        }
+                      },
+                      child: Text('Kosongkan Meja $_tempMejaSelection', style: const TextStyle(color: Colors.red)),
+                    ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () {
+                      setDialogState(() => _tempMejaSelection = null);
+                      setState(() => _selectedMeja = null);
+                      Navigator.pop(context);
+                    },
+                    child: const Text('Hapus Pilihan', style: TextStyle(color: Colors.grey)),
+                  ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    ),
+                    onPressed: () {
+                      setState(() => _selectedMeja = _tempMejaSelection);
+                      Navigator.pop(context);
+                    },
+                    child: const Text('Pilih Meja (OK)', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ],
+                actionsAlignment: MainAxisAlignment.spaceBetween,
+              );
+            },
           );
         }
       ),
+    );
+  }
+
+  Widget _buildLegendItem(Color color, String label) {
+    return Row(
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(3)),
+        ),
+        const SizedBox(width: 6),
+        Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+      ],
     );
   }
 }

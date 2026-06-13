@@ -51,6 +51,7 @@ dependencies:
   esc_pos_utils_plus: ^2.0.4
   permission_handler: ^12.0.1
   shared_preferences: ^2.5.5
+  mailer: ^7.1.0
 
 dev_dependencies:
   flutter_test:

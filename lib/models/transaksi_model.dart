@@ -15,6 +15,7 @@ class Transaksi {
   final String? noMeja;
   final String status; // 'Selesai' (Sudah Bayar) atau 'Pending' (Belum Bayar)
   final bool isPrinted;
+  final bool isSettled;
 
   Transaksi({
     this.id,
@@ -31,6 +32,7 @@ class Transaksi {
     this.noMeja,
     this.status = 'Selesai',
     this.isPrinted = false,
+    this.isSettled = false,
     required this.items,
   });
 
@@ -50,6 +52,7 @@ class Transaksi {
       'no_meja': noMeja,
       'status': status,
       'is_printed': isPrinted ? 1 : 0,
+      'is_settled': isSettled ? 1 : 0,
     };
   }
 
@@ -69,6 +72,7 @@ class Transaksi {
       noMeja: map['no_meja'],
       status: map['status'] ?? 'Selesai',
       isPrinted: (map['is_printed'] ?? 0) == 1,
+      isSettled: (map['is_settled'] ?? 0) == 1,
       items: items,
     );
   }

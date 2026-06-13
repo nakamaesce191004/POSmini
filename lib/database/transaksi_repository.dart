@@ -7,14 +7,21 @@ class DashboardSummary {
   final int totalPenjualan;
   final int totalHpp;
   final int totalProdukTerjual;
+  final int totalDiskon;
+  final int totalPajak;
+  final int totalPengeluaranManual;
 
   const DashboardSummary({
     required this.totalPenjualan,
     required this.totalHpp,
     required this.totalProdukTerjual,
+    required this.totalDiskon,
+    required this.totalPajak,
+    required this.totalPengeluaranManual,
   });
 
-  int get laba => totalPenjualan - totalHpp;
+  // Laba = (Penjualan - Diskon) - HPP - Pengeluaran Manual
+  int get laba => (totalPenjualan - totalDiskon) - totalHpp - totalPengeluaranManual;
 }
 
 class DashboardTrendPoint {
@@ -60,25 +67,37 @@ class TransaksiRepository {
     });
   }
 
-  Future<List<Transaksi>> getAll({int limit = 50, String? startDate, String? endDate}) async {
+  Future<List<Transaksi>> getAll({int limit = 50, String? startDate, String? endDate, bool? isPrinted, bool? isSettled}) async {
     final db = await _dbHelper.database;
     
-    String whereClause = "";
-    List<String> whereArgs = [];
+    List<String> conditions = [];
+    List<Object?> whereArgs = [];
     
     if (startDate != null && endDate != null) {
-      whereClause = "WHERE tanggal >= ? AND tanggal <= ?";
-      whereArgs = [startDate, endDate];
+      conditions.add("tanggal >= ? AND tanggal <= ?");
+      whereArgs.addAll([startDate, endDate]);
     } else if (startDate != null) {
-      whereClause = "WHERE tanggal >= ?";
-      whereArgs = [startDate];
+      conditions.add("tanggal >= ?");
+      whereArgs.add(startDate);
     }
+
+    if (isPrinted != null) {
+      conditions.add("is_printed = ?");
+      whereArgs.add(isPrinted ? 1 : 0);
+    }
+
+    if (isSettled != null) {
+      conditions.add("is_settled = ?");
+      whereArgs.add(isSettled ? 1 : 0);
+    }
+
+    String? whereClause = conditions.isEmpty ? null : conditions.join(" AND ");
 
     // 1. Ambil header transaksi
     final List<Map<String, dynamic>> maps = await db.query(
       'transaksi', 
-      where: whereClause.isEmpty ? null : whereClause.replaceFirst("WHERE ", ""),
-      whereArgs: whereArgs.isEmpty ? null : whereArgs,
+      where: whereClause,
+      whereArgs: whereArgs,
       orderBy: 'tanggal DESC',
       limit: limit,
     );
@@ -170,10 +189,10 @@ class TransaksiRepository {
     return 0;
   }
 
-  Future<DashboardSummary> getDashboardSummary({String? startDate, String? endDate}) async {
+  Future<DashboardSummary> getDashboardSummary({String? startDate, String? endDate, bool? isPrinted, bool? isSettled}) async {
     final db = await _dbHelper.database;
     String dateFilter = "";
-    List<String> args = [];
+    List<Object?> args = [];
     
     if (startDate != null && endDate != null) {
       dateFilter = " AND tanggal >= ? AND tanggal <= ?";
@@ -183,9 +202,21 @@ class TransaksiRepository {
       args = [startDate];
     }
 
+    if (isPrinted != null) {
+      dateFilter += " AND is_printed = ?";
+      args.add(isPrinted ? 1 : 0);
+    }
+
+    if (isSettled != null) {
+      dateFilter += " AND is_settled = ?";
+      args.add(isSettled ? 1 : 0);
+    }
+
     final result = await db.rawQuery('''
       SELECT
         SUM(nominal) AS total_penjualan,
+        SUM(diskon) AS total_diskon,
+        SUM(pajak) AS total_pajak,
         (
           SELECT SUM(ti.qty * p.harga_beli)
           FROM transaksi_items ti
@@ -198,16 +229,24 @@ class TransaksiRepository {
           FROM transaksi_items ti
           JOIN transaksi t ON ti.transaksi_id = t.id
           WHERE t.jenis = 'pemasukan' $dateFilter
-        ) AS total_produk_terjual
+        ) AS total_produk_terjual,
+        (
+          SELECT SUM(nominal)
+          FROM transaksi
+          WHERE jenis = 'pengeluaran' $dateFilter
+        ) AS total_pengeluaran_manual
       FROM transaksi
       WHERE jenis = 'pemasukan' $dateFilter
-    ''', [...args, ...args, ...args]);
+    ''', [...args, ...args, ...args, ...args]);
 
     final row = result.first;
     return DashboardSummary(
       totalPenjualan: _asInt(row['total_penjualan']),
       totalHpp: _asInt(row['total_hpp']),
       totalProdukTerjual: _asInt(row['total_produk_terjual']),
+      totalDiskon: _asInt(row['total_diskon']),
+      totalPajak: _asInt(row['total_pajak']),
+      totalPengeluaranManual: _asInt(row['total_pengeluaran_manual']),
     );
   }
 
@@ -282,17 +321,27 @@ class TransaksiRepository {
     return 0;
   }
   Future<List<String>> getUsedSeatsToday() async {
+    final map = await getOccupiedSeatsWithCustomer();
+    return map.keys.toList();
+  }
+
+  Future<Map<String, String>> getOccupiedSeatsWithCustomer() async {
     final db = await _dbHelper.database;
-    final String todayString = DateTime.now().toString().substring(0, 10); // YYYY-MM-DD
+    final String todayString = DateTime.now().toString().substring(0, 10);
     
     final List<Map<String, dynamic>> maps = await db.query(
       'transaksi',
-      columns: ['no_meja'],
-      where: "tanggal LIKE ? AND no_meja IS NOT NULL AND no_meja != '' AND (status = 'Pending' OR status = 'pending')",
+      columns: ['no_meja', 'pelanggan'],
+      where: "tanggal LIKE ? AND no_meja IS NOT NULL AND no_meja != ''",
       whereArgs: ['$todayString%'],
+      orderBy: 'tanggal ASC',
     );
     
-    return maps.map((m) => m['no_meja'].toString()).toSet().toList(); // Unique list
+    final Map<String, String> result = {};
+    for (var m in maps) {
+      result[m['no_meja'].toString()] = m['pelanggan'].toString();
+    }
+    return result;
   }
 
   Future<void> clearSeat(String noMeja) async {
@@ -354,6 +403,16 @@ class TransaksiRepository {
       {'is_printed': isPrinted ? 1 : 0},
       where: 'id = ?',
       whereArgs: [id],
+    );
+  }
+
+  Future<void> markAsSettled(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final db = await _dbHelper.database;
+    final String placeholders = ids.map((_) => '?').join(',');
+    await db.rawUpdate(
+      'UPDATE transaksi SET is_settled = 1 WHERE id IN ($placeholders)',
+      ids,
     );
   }
 }

@@ -6,6 +6,8 @@ import '../database/presensi_repository.dart';
 import '../models/presensi_model.dart';
 import '../main.dart'; // To access the global cameras list
 import '../widgets/app_image_view.dart';
+import '../models/karyawan_model.dart';
+import '../database/karyawan_repository.dart';
 
 class PresensiScreen extends StatefulWidget {
   const PresensiScreen({super.key});
@@ -18,11 +20,30 @@ class _PresensiScreenState extends State<PresensiScreen> {
   XFile? _image;
   final ImagePicker _picker = ImagePicker();
   final PresensiRepository _repo = PresensiRepository();
-  final TextEditingController _nameController = TextEditingController();
+  final KaryawanRepository _karyawanRepo = KaryawanRepository();
+  List<Karyawan> _karyawanList = [];
+  Karyawan? _selectedKaryawan;
+  bool _isLoadingKaryawan = true;
+  String? _lastStatus;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadKaryawan();
+  }
+
+  Future<void> _loadKaryawan() async {
+    final data = await _karyawanRepo.getKaryawan();
+    if (mounted) {
+      setState(() {
+        _karyawanList = data;
+        _isLoadingKaryawan = false;
+      });
+    }
+  }
 
   @override
   void dispose() {
-    _nameController.dispose();
     super.dispose();
   }
 
@@ -113,11 +134,31 @@ class _PresensiScreenState extends State<PresensiScreen> {
   }
 
   void _simpanPresensi(String status) async {
-    if (_nameController.text.trim().isEmpty) {
+    if (_selectedKaryawan == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Silakan isi nama terlebih dahulu!'),
+          content: Text('Silakan pilih nama terlebih dahulu!'),
           backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    if (status == 'Masuk' && _lastStatus == 'Masuk') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Anda sudah presensi masuk, silakan presensi pulang terlebih dahulu.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (status == 'Pulang' && (_lastStatus == 'Pulang' || _lastStatus == null)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Anda harus presensi masuk terlebih dahulu sebelum presensi pulang.'),
+          backgroundColor: Colors.red,
         ),
       );
       return;
@@ -134,7 +175,7 @@ class _PresensiScreenState extends State<PresensiScreen> {
     }
 
     final p = Presensi(
-      namaKaryawan: _nameController.text.trim(),
+      namaKaryawan: _selectedKaryawan!.nama,
       waktu: DateTime.now(),
       status: status,
       fotoPath: _image!.path,
@@ -142,8 +183,11 @@ class _PresensiScreenState extends State<PresensiScreen> {
 
     await _repo.insert(p);
 
+    final newStatus = await _repo.getLastStatus(_selectedKaryawan!.nama);
+
     setState(() {
       _image = null; // Reset setelah simpan
+      _lastStatus = newStatus;
     });
 
     if (mounted) {
@@ -187,17 +231,38 @@ class _PresensiScreenState extends State<PresensiScreen> {
                   BoxShadow(color: Colors.grey[200]!, blurRadius: 10, offset: const Offset(0, 4)),
                 ],
               ),
-              child: TextField(
-                controller: _nameController,
-                decoration: InputDecoration(
-                  labelText: 'Nama Karyawan (Wajib)',
-                  hintText: 'Masukkan nama Anda...',
-                  prefixIcon: const Icon(Icons.person, color: Colors.orange),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
-                  filled: true,
-                  fillColor: Colors.white,
-                ),
-              ),
+              child: _isLoadingKaryawan 
+                ? const Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator())
+                : DropdownButtonFormField<Karyawan>(
+                    value: _selectedKaryawan,
+                    items: _karyawanList.map((k) {
+                      return DropdownMenuItem<Karyawan>(
+                        value: k,
+                        child: Text(k.nama),
+                      );
+                    }).toList(),
+                    onChanged: (val) async {
+                      setState(() {
+                        _selectedKaryawan = val;
+                      });
+                      if (val != null) {
+                        final status = await _repo.getLastStatus(val.nama);
+                        if (mounted) {
+                          setState(() {
+                            _lastStatus = status;
+                          });
+                        }
+                      }
+                    },
+                    decoration: InputDecoration(
+                      labelText: 'Nama Karyawan (Wajib)',
+                      hintText: 'Pilih nama Anda...',
+                      prefixIcon: const Icon(Icons.person, color: Colors.orange),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                      filled: true,
+                      fillColor: Colors.white,
+                    ),
+                  ),
             ),
             const SizedBox(height: 24),
             GestureDetector(
@@ -253,19 +318,20 @@ class _PresensiScreenState extends State<PresensiScreen> {
               children: [
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: () => _simpanPresensi('Masuk'),
+                    onPressed: _lastStatus == 'Masuk' ? null : () => _simpanPresensi('Masuk'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green,
+                      disabledBackgroundColor: Colors.grey[300],
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       elevation: 0,
                     ),
-                    child: const Row(
+                    child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.login, color: Colors.white),
-                        SizedBox(width: 8),
-                        Text('Presensi Masuk', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                        Icon(Icons.login, color: _lastStatus == 'Masuk' ? Colors.grey[500] : Colors.white),
+                        const SizedBox(width: 8),
+                        Text('Presensi Masuk', style: TextStyle(color: _lastStatus == 'Masuk' ? Colors.grey[500] : Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                       ],
                     ),
                   ),
@@ -273,19 +339,20 @@ class _PresensiScreenState extends State<PresensiScreen> {
                 const SizedBox(width: 16),
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: () => _simpanPresensi('Pulang'),
+                    onPressed: (_lastStatus == 'Pulang' || _lastStatus == null) ? null : () => _simpanPresensi('Pulang'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.redAccent,
+                      disabledBackgroundColor: Colors.grey[300],
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       elevation: 0,
                     ),
-                    child: const Row(
+                    child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.logout, color: Colors.white),
-                        SizedBox(width: 8),
-                        Text('Presensi Pulang', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                        Icon(Icons.logout, color: (_lastStatus == 'Pulang' || _lastStatus == null) ? Colors.grey[500] : Colors.white),
+                        const SizedBox(width: 8),
+                        Text('Presensi Pulang', style: TextStyle(color: (_lastStatus == 'Pulang' || _lastStatus == null) ? Colors.grey[500] : Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                       ],
                     ),
                   ),
