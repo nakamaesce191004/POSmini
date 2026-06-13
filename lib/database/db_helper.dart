@@ -1,6 +1,9 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'dart:io';
 
 class DBHelper {
   static final DBHelper _instance = DBHelper._internal();
@@ -12,6 +15,15 @@ class DBHelper {
 
   static Future<Database>? _dbFuture;
 
+  void _ensureDatabaseFactoryInitialized() {
+    if (kIsWeb) return;
+
+    if (Platform.isWindows || Platform.isLinux) {
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
+    }
+  }
+
   Future<Database> get database async {
     if (_database != null) return _database!;
     _dbFuture ??= _initDatabase();
@@ -20,6 +32,8 @@ class DBHelper {
   }
 
   Future<Database> _initDatabase() async {
+    _ensureDatabaseFactoryInitialized();
+
     String path = join(await getDatabasesPath(), 'kasirr.db');
     Database db = await openDatabase(
       path,
@@ -30,7 +44,7 @@ class DBHelper {
 
     // Safety net: Pastikan tabel settings ada (mencegah error 'no such table')
     await _ensureSettingsTable(db);
-    
+
     // Safety net v4: Pastikan kolom baru ada di transaksi
     await _ensureTransaksiColumns(db);
 
@@ -87,12 +101,14 @@ class DBHelper {
     ''');
     // Migrasi: tambah kolom username jika belum ada
     try {
-      final List<Map<String, dynamic>> res =
-          await db.rawQuery('PRAGMA table_info(users)');
+      final List<Map<String, dynamic>> res = await db.rawQuery(
+        'PRAGMA table_info(users)',
+      );
       final columns = res.map((c) => c['name'].toString()).toList();
       if (!columns.contains('username')) {
         await db.execute(
-            'ALTER TABLE users ADD COLUMN username TEXT DEFAULT ""');
+          'ALTER TABLE users ADD COLUMN username TEXT DEFAULT ""',
+        );
       }
     } catch (e) {
       debugPrint('Error ensuring username column: $e');
@@ -108,7 +124,7 @@ class DBHelper {
         isActive INTEGER DEFAULT 1
       )
     ''');
-    
+
     // Seed initial tables if empty
     final List<Map<String, dynamic>> maps = await db.query('meja');
     if (maps.isEmpty) {
@@ -125,10 +141,14 @@ class DBHelper {
 
   Future<void> _ensureIsPrintedColumn(Database db) async {
     try {
-      final List<Map<String, dynamic>> res = await db.rawQuery('PRAGMA table_info(transaksi)');
+      final List<Map<String, dynamic>> res = await db.rawQuery(
+        'PRAGMA table_info(transaksi)',
+      );
       final bool exists = res.any((col) => col['name'] == 'is_printed');
       if (!exists) {
-        await db.execute('ALTER TABLE transaksi ADD COLUMN is_printed INTEGER DEFAULT 0');
+        await db.execute(
+          'ALTER TABLE transaksi ADD COLUMN is_printed INTEGER DEFAULT 0',
+        );
       }
     } catch (e) {
       debugPrint("Error ensuring is_printed column: $e");
@@ -137,10 +157,14 @@ class DBHelper {
 
   Future<void> _ensureIsSettledColumn(Database db) async {
     try {
-      final List<Map<String, dynamic>> res = await db.rawQuery('PRAGMA table_info(transaksi)');
+      final List<Map<String, dynamic>> res = await db.rawQuery(
+        'PRAGMA table_info(transaksi)',
+      );
       final bool exists = res.any((col) => col['name'] == 'is_settled');
       if (!exists) {
-        await db.execute('ALTER TABLE transaksi ADD COLUMN is_settled INTEGER DEFAULT 0');
+        await db.execute(
+          'ALTER TABLE transaksi ADD COLUMN is_settled INTEGER DEFAULT 0',
+        );
       }
     } catch (e) {
       debugPrint("Error ensuring is_settled column: $e");
@@ -149,11 +173,15 @@ class DBHelper {
 
   Future<void> _ensureBahanBakuColumns(Database db) async {
     try {
-      final List<Map<String, dynamic>> res = await db.rawQuery('PRAGMA table_info(bahan_baku)');
+      final List<Map<String, dynamic>> res = await db.rawQuery(
+        'PRAGMA table_info(bahan_baku)',
+      );
       final columns = res.map((c) => c['name'].toString()).toList();
-      
+
       if (!columns.contains('stok_minimal')) {
-        await db.execute('ALTER TABLE bahan_baku ADD COLUMN stok_minimal REAL DEFAULT 0');
+        await db.execute(
+          'ALTER TABLE bahan_baku ADD COLUMN stok_minimal REAL DEFAULT 0',
+        );
       }
       if (!columns.contains('supplier')) {
         await db.execute('ALTER TABLE bahan_baku ADD COLUMN supplier TEXT');
@@ -190,10 +218,14 @@ class DBHelper {
 
   Future<void> _ensureStatusColumn(Database db) async {
     try {
-      final List<Map<String, dynamic>> res = await db.rawQuery('PRAGMA table_info(transaksi)');
+      final List<Map<String, dynamic>> res = await db.rawQuery(
+        'PRAGMA table_info(transaksi)',
+      );
       final bool exists = res.any((col) => col['name'] == 'status');
       if (!exists) {
-        await db.execute('ALTER TABLE transaksi ADD COLUMN status TEXT DEFAULT "Selesai"');
+        await db.execute(
+          'ALTER TABLE transaksi ADD COLUMN status TEXT DEFAULT "Selesai"',
+        );
       }
     } catch (e) {
       debugPrint("Error ensuring status column: $e");
@@ -202,9 +234,11 @@ class DBHelper {
 
   Future<void> _ensureMejaColumn(Database db) async {
     try {
-      final List<Map<String, dynamic>> res = await db.rawQuery('PRAGMA table_info(transaksi)');
+      final List<Map<String, dynamic>> res = await db.rawQuery(
+        'PRAGMA table_info(transaksi)',
+      );
       final columns = res.map((c) => c['name'].toString()).toList();
-      
+
       if (!columns.contains('no_meja')) {
         await db.execute('ALTER TABLE transaksi ADD COLUMN no_meja TEXT');
       }
@@ -215,9 +249,11 @@ class DBHelper {
 
   Future<void> _ensureTransaksiColumns(Database db) async {
     try {
-      final List<Map<String, dynamic>> res = await db.rawQuery('PRAGMA table_info(transaksi)');
+      final List<Map<String, dynamic>> res = await db.rawQuery(
+        'PRAGMA table_info(transaksi)',
+      );
       final columns = res.map((c) => c['name'].toString()).toList();
-      
+
       if (!columns.contains('diskon_info')) {
         await db.execute('ALTER TABLE transaksi ADD COLUMN diskon_info TEXT');
       }
@@ -237,7 +273,7 @@ class DBHelper {
         value TEXT
       )
     ''');
-    
+
     // Cek apakah PIN sudah ada, jika belum masukkan default
     final List<Map<String, dynamic>> maps = await db.query(
       'settings',
@@ -289,12 +325,16 @@ class DBHelper {
         'value': '1234',
       });
     }
-    
+
     if (oldVersion < 3) {
       // Tambahkan kolom diskon dan pajak ke tabel transaksi
       try {
-        await db.execute('ALTER TABLE transaksi ADD COLUMN diskon INTEGER DEFAULT 0');
-        await db.execute('ALTER TABLE transaksi ADD COLUMN pajak INTEGER DEFAULT 0');
+        await db.execute(
+          'ALTER TABLE transaksi ADD COLUMN diskon INTEGER DEFAULT 0',
+        );
+        await db.execute(
+          'ALTER TABLE transaksi ADD COLUMN pajak INTEGER DEFAULT 0',
+        );
       } catch (e) {
         debugPrint("Upgrade to v3 error: $e");
       }
@@ -321,7 +361,9 @@ class DBHelper {
     if (oldVersion < 6) {
       // Tambahkan kolom status
       try {
-        await db.execute('ALTER TABLE transaksi ADD COLUMN status TEXT DEFAULT "Selesai"');
+        await db.execute(
+          'ALTER TABLE transaksi ADD COLUMN status TEXT DEFAULT "Selesai"',
+        );
       } catch (e) {
         debugPrint("Error upgrading to v6: $e");
       }
@@ -480,12 +522,9 @@ class DBHelper {
       'gambar': '',
       'isActive': 1,
     });
-    
+
     // Initial Pelanggan (Umum)
-    await db.insert('pelanggan', {
-      'id': 'P1',
-      'nama': 'Umum',
-    });
+    await db.insert('pelanggan', {'id': 'P1', 'nama': 'Umum'});
 
     // Initial Security PIN
     await db.insert('settings', {
